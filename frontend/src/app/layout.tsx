@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from "next";
+import Link from "next/link";
 import "./globals.css";
 
 export const viewport: Viewport = {
@@ -31,7 +32,7 @@ export default function RootLayout({
       <body className="min-h-screen flex flex-col bg-[#090d16] text-slate-100 antialiased selection:bg-purple-600 selection:text-white">
         <header className="sticky top-0 z-50 w-full border-b border-white/10 bg-[#090d16]/80 backdrop-blur-md">
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
-            <a
+            <Link
               href="/"
               id="brand-logo"
               className="flex items-center gap-2.5 text-lg font-bold tracking-tight text-white hover:opacity-90 transition-opacity"
@@ -40,7 +41,7 @@ export default function RootLayout({
                 ✨
               </div>
               <span>GiftMind</span>
-            </a>
+            </Link>
 
             <nav aria-label="Main Navigation" className="flex items-center gap-6">
               <a
