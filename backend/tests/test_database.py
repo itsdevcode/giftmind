@@ -58,7 +58,7 @@ async def test_get_db_dependency_no_auto_commit(test_settings: Settings) -> None
         await session.execute(
             text("CREATE TEMPORARY TABLE test_items (id INTEGER PRIMARY KEY, name TEXT)")
         )
-        await session.execute(text("INSERT INTO test_items (name) VALUES ('uncommitted')"))
+        await session.execute(text("INSERT INTO test_items (id, name) VALUES (1, 'uncommitted')"))
         # We deliberately DO NOT call session.commit()
         return {"ok": True}
 
