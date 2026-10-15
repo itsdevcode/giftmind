@@ -48,35 +48,70 @@ async def test_app_instances_do_not_share_engines() -> None:
 
 
 @pytest.mark.asyncio
-async def test_get_db_dependency_no_auto_commit(test_settings: Settings) -> None:
-    """Verify get_db does not unconditionally commit on success."""
+async def test_uncommitted_database_write_is_rolled_back_across_sessions(
+    test_settings: Settings,
+) -> None:
+    """Verify that an uncommitted database write is rolled back and cannot be observed across separate sessions."""
     app = create_app(settings=test_settings)
 
-    # Temporary route to test get_db
-    @app.post("/test-items")
-    async def create_item(session: Annotated[AsyncSession, Depends(get_db)]):
-        await session.execute(
-            text("CREATE TEMPORARY TABLE test_items (id INTEGER PRIMARY KEY, name TEXT)")
-        )
-        await session.execute(text("INSERT INTO test_items (id, name) VALUES (1, 'uncommitted')"))
-        # We deliberately DO NOT call session.commit()
-        return {"ok": True}
+    # Persistent test table across sessions
+    table_name = "test_persistence_items"
 
-    @app.get("/test-items")
-    async def list_items(session: Annotated[AsyncSession, Depends(get_db)]):
-        try:
-            res = await session.execute(text("SELECT COUNT(*) FROM test_items"))
-            count = res.scalar()
-        except Exception:
-            count = 0
+    @app.post("/items/uncommitted")
+    async def create_uncommitted_item(session: Annotated[AsyncSession, Depends(get_db)]):
+        # Insert without commit
+        await session.execute(
+            text(f"INSERT INTO {table_name} (id, name) VALUES (1, 'uncommitted_name')")
+        )
+        return {"status": "uncommitted_written"}
+
+    @app.post("/items/committed")
+    async def create_committed_item(session: Annotated[AsyncSession, Depends(get_db)]):
+        # Insert with explicit commit
+        await session.execute(
+            text(f"INSERT INTO {table_name} (id, name) VALUES (2, 'committed_name')")
+        )
+        await session.commit()
+        return {"status": "committed_written"}
+
+    @app.get("/items/count")
+    async def get_items_count(session: Annotated[AsyncSession, Depends(get_db)]):
+        res = await session.execute(text(f"SELECT COUNT(*) FROM {table_name}"))
+        count = res.scalar()
         return {"count": count}
 
     async with app.router.lifespan_context(app):
+        # 1. Set up persistent test table via app's session factory
+        session_factory = app.state.session_factory
+        async with session_factory() as setup_session:
+            await setup_session.execute(text(f"DROP TABLE IF EXISTS {table_name}"))
+            await setup_session.execute(
+                text(f"CREATE TABLE {table_name} (id INTEGER PRIMARY KEY, name TEXT)")
+            )
+            await setup_session.commit()
+
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://testserver") as client:
-            res = await client.post("/test-items")
-            assert res.status_code == 200
+            # 2. Trigger route that inserts without calling session.commit()
+            uncommitted_res = await client.post("/items/uncommitted")
+            assert uncommitted_res.status_code == 200
 
-            # In session without commit, separate connection won't see or persist table across sessions
-            res_list = await client.get("/test-items")
-            assert res_list.status_code == 200
+            # 3. Query in a separate session via GET /items/count:
+            # The uncommitted write must have been rolled back upon closing the first session!
+            count_after_uncommitted = await client.get("/items/count")
+            assert count_after_uncommitted.status_code == 200
+            assert count_after_uncommitted.json()["count"] == 0
+
+            # 4. For contrast, trigger route with explicit session.commit()
+            committed_res = await client.post("/items/committed")
+            assert committed_res.status_code == 200
+
+            # 5. Query in another separate session: the committed write IS persisted!
+            count_after_committed = await client.get("/items/count")
+            assert count_after_committed.status_code == 200
+            assert count_after_committed.json()["count"] == 1
+
+        # 6. Cleanup persistent test table
+        async with session_factory() as cleanup_session:
+            await cleanup_session.execute(text(f"DROP TABLE IF EXISTS {table_name}"))
+            await cleanup_session.commit()

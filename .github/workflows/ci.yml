@@ -93,5 +93,8 @@ jobs:
       - name: ESLint Check
         run: npm run lint
 
+      - name: Production Security Audit
+        run: npm audit --omit=dev --audit-level=high
+
       - name: Production Build
         run: npm run build
