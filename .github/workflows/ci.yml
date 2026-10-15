@@ -8,8 +8,23 @@ on:
 
 jobs:
   backend-checks:
-    name: Backend Tests & Lint
+    name: Backend Tests & Lint (with PostgreSQL)
     runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: giftmind
+          POSTGRES_PASSWORD: giftmind_test_password
+          POSTGRES_DB: giftmind_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
 
     steps:
       - name: Checkout code
@@ -26,20 +41,29 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e "./backend[dev]"
 
+      - name: Run Ruff Format Check
+        run: |
+          cd backend
+          ruff format --check app tests
+
       - name: Run Ruff Lint Check
         run: |
           cd backend
           ruff check app tests
 
-      - name: Run Pytest
+      - name: Run Pytest (PostgreSQL Integration)
+        env:
+          DATABASE_URL: postgresql+asyncpg://giftmind:giftmind_test_password@localhost:5432/giftmind_test
         run: |
           cd backend
           pytest
 
-      - name: Verify Alembic Configuration
+      - name: Verify Alembic Migration Against PostgreSQL
+        env:
+          DATABASE_URL: postgresql+asyncpg://giftmind:giftmind_test_password@localhost:5432/giftmind_test
         run: |
           cd backend
-          DATABASE_URL="sqlite+aiosqlite:///:memory:" alembic check
+          alembic check
 
   frontend-checks:
     name: Frontend Lint, Types & Build

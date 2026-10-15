@@ -12,10 +12,9 @@ from app.main import create_app
 
 
 @pytest.mark.asyncio
-async def test_database_engine_and_session_smoke() -> None:
+async def test_database_engine_and_session_smoke(test_settings: Settings) -> None:
     """Verify that an async engine can execute queries and sessionmaker binds cleanly."""
-    settings = Settings(DATABASE_URL="sqlite+aiosqlite:///:memory:")
-    engine, session_factory = create_engine_and_sessionmaker(settings)
+    engine, _ = create_engine_and_sessionmaker(test_settings)
     async with engine.connect() as conn:
         result = await conn.execute(text("SELECT 1 AS alive"))
         row = result.fetchone()
@@ -49,15 +48,16 @@ async def test_app_instances_do_not_share_engines() -> None:
 
 
 @pytest.mark.asyncio
-async def test_get_db_dependency_no_auto_commit() -> None:
+async def test_get_db_dependency_no_auto_commit(test_settings: Settings) -> None:
     """Verify get_db does not unconditionally commit on success."""
-    settings = Settings(DATABASE_URL="sqlite+aiosqlite:///:memory:")
-    app = create_app(settings=settings)
+    app = create_app(settings=test_settings)
 
     # Temporary route to test get_db
     @app.post("/test-items")
     async def create_item(session: Annotated[AsyncSession, Depends(get_db)]):
-        await session.execute(text("CREATE TABLE test_items (id INTEGER PRIMARY KEY, name TEXT)"))
+        await session.execute(
+            text("CREATE TEMPORARY TABLE test_items (id INTEGER PRIMARY KEY, name TEXT)")
+        )
         await session.execute(text("INSERT INTO test_items (name) VALUES ('uncommitted')"))
         # We deliberately DO NOT call session.commit()
         return {"ok": True}
@@ -77,7 +77,6 @@ async def test_get_db_dependency_no_auto_commit() -> None:
             res = await client.post("/test-items")
             assert res.status_code == 200
 
-            # In SQLite in-memory without commit, separate connection won't see or persist table across sessions
+            # In session without commit, separate connection won't see or persist table across sessions
             res_list = await client.get("/test-items")
-            # If auto-commit was present, count would be 1; without auto-commit, it rolled back / wasn't committed
             assert res_list.status_code == 200
