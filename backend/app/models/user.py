@@ -2,7 +2,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, DateTime, Index, String
+from sqlalchemy import Boolean, DateTime, Index, String, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -60,4 +60,5 @@ class User(Base):
         passive_deletes=True,
     )
 
-    __table_args__ = (Index("ix_users_email_lower", email),)
+    # Unique functional index on lowercase email to guarantee case-insensitive uniqueness at the database level
+    __table_args__ = (Index("ix_users_email_lower", text("lower(email)"), unique=True),)

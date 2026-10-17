@@ -3,12 +3,15 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_settings, verify_csrf
 from app.core.config import Settings
+from app.core.rate_limit import rate_limit_auth
 from app.core.security import (
     create_access_token,
+    create_csrf_token,
     generate_secure_token,
     hash_password,
     hash_token,
@@ -49,7 +52,7 @@ def _set_auth_cookies(
         samesite=settings.AUTH_COOKIE_SAMESITE,
     )
 
-    # CSRF cookie readable by frontend for Double-Submit protection
+    # CSRF cookie readable by frontend for Double-Submit / API header protection
     response.set_cookie(
         key=settings.CSRF_COOKIE_NAME,
         value=csrf_token,
@@ -102,7 +105,11 @@ async def _issue_tokens_for_user(
 
     raw_refresh_token = generate_secure_token()
     token_hash = hash_token(raw_refresh_token)
-    csrf_token = generate_secure_token()
+    csrf_token = create_csrf_token(
+        session_id=raw_refresh_token,
+        settings=settings,
+        expires_in_seconds=settings.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 3600,
+    )
 
     refresh_expiry = datetime.now(UTC) + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
     db_refresh_token = RefreshToken(
@@ -130,6 +137,7 @@ async def _issue_tokens_for_user(
     response_model=TokenResponse,
     status_code=status.HTTP_201_CREATED,
     summary="Register a new user account",
+    dependencies=[Depends(rate_limit_auth)],
 )
 async def register(
     payload: UserRegister,
@@ -138,7 +146,6 @@ async def register(
     settings: Annotated[Settings, Depends(get_current_settings)],
 ) -> TokenResponse:
     """Register a new user account with Argon2id password hashing and return auth credentials."""
-    # Check duplicate email
     normalized_email = payload.email.lower()
     existing = await db.execute(select(User).where(User.email == normalized_email))
     if existing.scalar_one_or_none() is not None:
@@ -157,7 +164,14 @@ async def register(
         is_active=True,
     )
     db.add(user)
-    await db.flush()  # Populates user.id before issuing tokens
+    try:
+        await db.flush()  # Populates user.id before issuing tokens
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="A user with this email address already exists.",
+        ) from None
 
     return await _issue_tokens_for_user(user, response, db, settings)
 
@@ -167,6 +181,7 @@ async def register(
     response_model=TokenResponse,
     status_code=status.HTTP_200_OK,
     summary="Authenticate user and issue tokens",
+    dependencies=[Depends(rate_limit_auth)],
 )
 async def login(
     payload: UserLogin,
@@ -208,7 +223,7 @@ async def refresh_token(
     settings: Annotated[Settings, Depends(get_current_settings)],
     _csrf: Annotated[None, Depends(verify_csrf)],
 ) -> TokenResponse:
-    """Rotate refresh token: revoke used token, generate new refresh token and access token."""
+    """Rotate refresh token atomically with row locking to prevent concurrent token reuse."""
     raw_cookie_token = request.cookies.get(settings.AUTH_COOKIE_NAME)
     if not raw_cookie_token:
         _clear_auth_cookies(response, settings)
@@ -218,7 +233,11 @@ async def refresh_token(
         )
 
     token_hash = hash_token(raw_cookie_token)
-    result = await db.execute(select(RefreshToken).where(RefreshToken.token_hash == token_hash))
+
+    # Acquire row-level lock on the refresh token row to prevent concurrent race conditions
+    result = await db.execute(
+        select(RefreshToken).where(RefreshToken.token_hash == token_hash).with_for_update()
+    )
     stored_token = result.scalar_one_or_none()
 
     if stored_token is None:
@@ -228,7 +247,7 @@ async def refresh_token(
             detail="Invalid refresh token.",
         )
 
-    # Detect reused or revoked token
+    # Detect reused or revoked token (atomic check under row lock)
     if stored_token.is_revoked:
         _clear_auth_cookies(response, settings)
         # Potential token theft: Revoke all tokens for this user for security

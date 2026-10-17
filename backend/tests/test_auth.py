@@ -162,6 +162,7 @@ async def test_refresh_token_rotation_and_revocation(client: AsyncClient, test_a
     refresh_token_cookie_2 = refresh_res_1.cookies.get("giftmind_refresh_token")
     csrf_token_2 = refresh_res_1.cookies.get("giftmind_csrf_token")
     assert refresh_token_cookie_2 is not None
+    assert csrf_token_2 is not None
     assert refresh_token_cookie_2 != refresh_token_cookie_1
 
     # Verify first refresh token in DB is now marked revoked
@@ -176,10 +177,10 @@ async def test_refresh_token_rotation_and_revocation(client: AsyncClient, test_a
 
     # 3. Replaying revoked refresh token (replay attack detection)
     client.cookies.set("giftmind_refresh_token", refresh_token_cookie_1)
-    client.cookies.set("giftmind_csrf_token", csrf_token_2)
+    client.cookies.set("giftmind_csrf_token", csrf_token)
     replay_res = await client.post(
         "/api/v1/auth/refresh",
-        headers={"x-csrf-token": csrf_token_2},
+        headers={"x-csrf-token": csrf_token},
     )
     assert replay_res.status_code == 401
     assert "Revoked" in replay_res.json()["detail"]

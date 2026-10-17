@@ -1,7 +1,7 @@
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -60,6 +60,40 @@ class Settings(BaseSettings):
     # CSRF Settings
     CSRF_COOKIE_NAME: str = "giftmind_csrf_token"
     CSRF_HEADER_NAME: str = "x-csrf-token"
+
+    @model_validator(mode="after")
+    def validate_production_security(self) -> "Settings":
+        """Enforce strict cryptographic secret standards in production environments."""
+        insecure_placeholders = {
+            "giftmind-insecure-dev-secret-key-change-in-production-min32bytes!",
+            "change-this-to-a-secure-random-32-byte-secret-in-production",
+            "secret",
+            "changeme",
+            "default",
+            "test-secret-key-for-testing-purposes-only-32bytes!",
+        }
+
+        if self.APP_ENV == "production":
+            val = (self.JWT_SECRET_KEY or "").strip()
+            if not val:
+                raise ValueError("JWT_SECRET_KEY must be configured in production.")
+            lower_val = val.lower()
+            if (
+                val in insecure_placeholders
+                or "change" in lower_val
+                or "placeholder" in lower_val
+                or "insecure" in lower_val
+                or "secret" == lower_val
+            ):
+                raise ValueError(
+                    "JWT_SECRET_KEY is set to an insecure default/placeholder and cannot be used in production."
+                )
+            if len(val) < 32:
+                raise ValueError(
+                    f"JWT_SECRET_KEY must be at least 32 characters long in production (current length: {len(val)})."
+                )
+
+        return self
 
 
 @lru_cache

@@ -31,7 +31,7 @@ def upgrade() -> None:
     sa.PrimaryKeyConstraint('id')
     )
     op.create_index(op.f('ix_users_email'), 'users', ['email'], unique=True)
-    op.create_index('ix_users_email_lower', 'users', ['email'], unique=False)
+    op.create_index('ix_users_email_lower', 'users', [sa.text('lower(email)')], unique=True)
     op.create_table('recipients',
     sa.Column('id', sa.UUID(), nullable=False),
     sa.Column('user_id', sa.UUID(), nullable=False),

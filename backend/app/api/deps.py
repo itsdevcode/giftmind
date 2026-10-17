@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
-from app.core.security import decode_access_token
+from app.core.security import decode_access_token, verify_csrf_token
 from app.db.session import get_db
 from app.models.user import User
 
@@ -84,13 +84,26 @@ async def get_current_user(
 
 
 async def verify_csrf(request: Request) -> None:
-    """FastAPI dependency to verify double-submit CSRF token on state-changing cookie requests."""
-    settings: Settings = request.app.state.settings
-    csrf_cookie = request.cookies.get(settings.CSRF_COOKIE_NAME)
-    csrf_header = request.headers.get(settings.CSRF_HEADER_NAME)
+    """FastAPI dependency to verify session-bound HMAC CSRF token on state-changing cookie requests.
 
-    if not csrf_cookie or not csrf_header or csrf_cookie != csrf_header:
+    Validates that:
+    1. A refresh token cookie exists (the authenticated session).
+    2. A CSRF token header (or fallback cookie) is provided.
+    3. The CSRF token signature matches HMAC-SHA256(JWT_SECRET_KEY, session_id:entropy:expiry).
+    4. The CSRF token is not expired and binds strictly to this refresh token.
+    """
+    settings: Settings = request.app.state.settings
+    raw_refresh_token = request.cookies.get(settings.AUTH_COOKIE_NAME)
+    csrf_token = request.headers.get(settings.CSRF_HEADER_NAME)
+
+    if not raw_refresh_token or not csrf_token:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Invalid or missing CSRF token.",
+        )
+
+    if not verify_csrf_token(csrf_token, raw_refresh_token, settings):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Invalid, expired, or cross-session CSRF token.",
         )
