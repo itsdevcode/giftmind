@@ -1,10 +1,14 @@
 import io
+import logging
+import os
 
 from reportlab.lib.colors import HexColor
 from reportlab.lib.enums import TA_CENTER, TA_JUSTIFY, TA_LEFT
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import inch
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.pdfgen import canvas
 from reportlab.platypus import (
     PageBreak,
@@ -15,6 +19,8 @@ from reportlab.platypus import (
 
 from app.models.story import StoryKeepsake
 
+logger = logging.getLogger(__name__)
+
 # Palette definitions for timeless elegant keepsake
 COLOR_PRIMARY = HexColor("#4A2E18")  # Warm deep mahogany / espresso
 COLOR_ACCENT = HexColor("#9C413D")  # Rich burgundy / rosewood
@@ -22,6 +28,48 @@ COLOR_TEXT = HexColor("#2D241E")  # Soft charcoal brown
 COLOR_MUTED = HexColor("#766A65")  # Subdued taupe
 COLOR_BORDER = HexColor("#E5DDD5")  # Subtle cream border
 COLOR_GOLD = HexColor("#C29B38")  # Elegant warm gold
+
+# Register Unicode TrueType fonts from secure system paths without remote asset fetching.
+# Note on Complex Script Shaping (e.g. Hindi / Devanagari, Arabic):
+# ReportLab's built-in PDF layout and canvas engines lack an OpenType complex-text
+# shaping engine (such as HarfBuzz). Devanagari characters and matras require conjunct
+# shaping and glyph reordering, which standard ReportLab TTFont engines do not perform.
+# While full Unicode European/Latin-extended/Cyrillic/Greek text renders correctly with
+# DejaVuSans TrueType fonts, complex Indic scripts like Hindi/Devanagari are not currently
+# shaped by ReportLab.
+FONT_REGULAR = "Helvetica"
+FONT_BOLD = "Helvetica-Bold"
+FONT_ITALIC = "Helvetica-Oblique"
+FONT_BOLD_ITALIC = "Helvetica-BoldOblique"
+
+_DEJAVU_REGULAR_PATHS = [
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    "/usr/share/fonts/dejavu/DejaVuSans.ttf",
+]
+_DEJAVU_BOLD_PATHS = [
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+    "/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf",
+]
+
+for _reg_path in _DEJAVU_REGULAR_PATHS:
+    if os.path.exists(_reg_path):
+        try:
+            pdfmetrics.registerFont(TTFont("DejaVuSans", _reg_path))
+            FONT_REGULAR = "DejaVuSans"
+            FONT_ITALIC = "DejaVuSans"  # DejaVuSans base works for clean unicode body
+            break
+        except Exception as e:
+            logger.warning(f"Failed to register DejaVuSans: {e}")
+
+for _bold_path in _DEJAVU_BOLD_PATHS:
+    if os.path.exists(_bold_path):
+        try:
+            pdfmetrics.registerFont(TTFont("DejaVuSans-Bold", _bold_path))
+            FONT_BOLD = "DejaVuSans-Bold"
+            FONT_BOLD_ITALIC = "DejaVuSans-Bold"
+            break
+        except Exception as e:
+            logger.warning(f"Failed to register DejaVuSans-Bold: {e}")
 
 
 class NumberedCanvas(canvas.Canvas):
@@ -58,7 +106,7 @@ class NumberedCanvas(canvas.Canvas):
             return
 
         self.saveState()
-        self.setFont("Helvetica", 8)
+        self.setFont(FONT_REGULAR, 8)
         self.setFillColor(COLOR_MUTED)
 
         # Header running line and mark
@@ -99,7 +147,7 @@ def generate_story_keepsake_pdf(
     cover_title_style = ParagraphStyle(
         "CoverTitle",
         parent=styles["Normal"],
-        fontName="Helvetica-Bold",
+        fontName=FONT_BOLD,
         fontSize=26,
         leading=32,
         alignment=TA_CENTER,
@@ -110,7 +158,7 @@ def generate_story_keepsake_pdf(
     cover_subtitle_style = ParagraphStyle(
         "CoverSubtitle",
         parent=styles["Normal"],
-        fontName="Helvetica",
+        fontName=FONT_REGULAR,
         fontSize=13,
         leading=18,
         alignment=TA_CENTER,
@@ -121,7 +169,7 @@ def generate_story_keepsake_pdf(
     dedication_style = ParagraphStyle(
         "Dedication",
         parent=styles["Normal"],
-        fontName="Helvetica-Oblique",
+        fontName=FONT_ITALIC,
         fontSize=11,
         leading=17,
         alignment=TA_CENTER,
@@ -132,7 +180,7 @@ def generate_story_keepsake_pdf(
     story_heading_style = ParagraphStyle(
         "StoryHeading",
         parent=styles["Normal"],
-        fontName="Helvetica-Bold",
+        fontName=FONT_BOLD,
         fontSize=18,
         leading=24,
         alignment=TA_LEFT,
@@ -143,7 +191,7 @@ def generate_story_keepsake_pdf(
     story_body_style = ParagraphStyle(
         "StoryBody",
         parent=styles["Normal"],
-        fontName="Helvetica",
+        fontName=FONT_REGULAR,
         fontSize=10.5,
         leading=17,
         alignment=TA_JUSTIFY,
@@ -154,7 +202,7 @@ def generate_story_keepsake_pdf(
     closing_style = ParagraphStyle(
         "ClosingMessage",
         parent=styles["Normal"],
-        fontName="Helvetica-BoldOblique",
+        fontName=FONT_BOLD_ITALIC,
         fontSize=11,
         leading=17,
         alignment=TA_LEFT,
@@ -166,7 +214,7 @@ def generate_story_keepsake_pdf(
     brand_mark_style = ParagraphStyle(
         "BrandMark",
         parent=styles["Normal"],
-        fontName="Helvetica",
+        fontName=FONT_REGULAR,
         fontSize=8.5,
         leading=12,
         alignment=TA_CENTER,

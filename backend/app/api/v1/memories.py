@@ -150,11 +150,16 @@ async def update_memories(
         ans.question_key: ans for ans in existing_res.scalars().all()
     }
 
-    # Atomic upsert
+    # Atomic upsert or deletion for empty answers
     now = datetime.now(UTC)
     for item in payload.answers:
         trimmed_ans = item.answer.strip()
-        if item.question_key in existing_by_key:
+        if not trimmed_ans:
+            # Explicit clearing / deletion semantics: blank answer deletes previously saved memory
+            if item.question_key in existing_by_key:
+                record_to_delete = existing_by_key.pop(item.question_key)
+                await db.delete(record_to_delete)
+        elif item.question_key in existing_by_key:
             record = existing_by_key[item.question_key]
             record.answer = trimmed_ans
             record.updated_at = now

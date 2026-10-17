@@ -245,16 +245,16 @@ async def test_pdf_unicode_and_long_text_pagination(client: AsyncClient):
     long_paragraphs = "\n\n".join(
         [
             f"Paragraph {i}: Eleanor, René & François shared café au lait under the crêpe myrtles. "
-            f"The stars in Orion's belt shone with timeless luminescence — a quiet reminder of infinite horizons. "
-            * 3
+            f"Witaj świecie, Łódź i Kraków — timeless luminescence & quiet horizons. Привет мир! "
+            * 2
             for i in range(1, 10)
         ]
     )
     patch_payload = {
-        "title": "Château & Étoiles: A Keepsake for Eleanor",
+        "title": "Château & Étoiles: Pamiątka dla Eleanor",
         "dedication": "Dédié à ma chère sœur Eleanor — with all my heart & gratitude.",
         "story_body": long_paragraphs,
-        "closing_message": "Avec tout notre amour pour toujours.",
+        "closing_message": "Avec tout notre amour pour toujours. До свидания!",
     }
     await client.patch(
         f"/api/v1/gift-projects/{proj_id}/story",
@@ -271,6 +271,9 @@ async def test_pdf_unicode_and_long_text_pagination(client: AsyncClient):
     assert len(reader.pages) >= 2
     full_text = " ".join([p.extract_text() or "" for p in reader.pages])
     assert "Eleanor" in full_text
+    assert "café" in full_text
+    assert "Łódź" in full_text
+    assert "Привет" in full_text
 
 
 @pytest.mark.asyncio
@@ -318,30 +321,47 @@ async def test_story_generation_concurrency_conflict(
     client: AsyncClient,
     monkeypatch: pytest.MonkeyPatch,
 ):
-    """Verify simultaneous story generation requests result in one success and one 409 Conflict."""
+    """Verify simultaneous story generation requests result in one success, one 409 Conflict, and exactly one inference call."""
     token, _, proj_id = await _create_test_user_project_and_memories(
         client, "Hannah Abbott", "hannah_concurrency@example.com"
     )
     headers = {"Authorization": f"Bearer {token}"}
 
     orig_generate = MockAIProvider.generate_story_keepsake
+    inference_started = asyncio.Event()
+    second_request_attempted = asyncio.Event()
+    inference_call_count = 0
 
-    async def slow_generate(self, prompt_input):
-        await asyncio.sleep(0.4)
+    async def synchronized_generate(self, prompt_input):
+        nonlocal inference_call_count
+        inference_call_count += 1
+        # Signal that the first request has successfully claimed the DB slot and entered inference
+        inference_started.set()
+        # Wait until the second request has definitely fired against the endpoint
+        await asyncio.wait_for(second_request_attempted.wait(), timeout=5.0)
         return await orig_generate(self, prompt_input)
 
-    monkeypatch.setattr(MockAIProvider, "generate_story_keepsake", slow_generate)
+    monkeypatch.setattr(MockAIProvider, "generate_story_keepsake", synchronized_generate)
 
-    # Launch two simultaneous requests
-    req1 = client.post(
-        f"/api/v1/gift-projects/{proj_id}/story/generate",
-        headers=headers,
-    )
-    req2 = client.post(
-        f"/api/v1/gift-projects/{proj_id}/story/generate",
-        headers=headers,
-    )
+    async def run_first():
+        return await client.post(
+            f"/api/v1/gift-projects/{proj_id}/story/generate",
+            headers=headers,
+        )
 
-    r1, r2 = await asyncio.gather(req1, req2)
+    async def run_second():
+        # Ensure the first request is inside inference while holding the pending status
+        await asyncio.wait_for(inference_started.wait(), timeout=5.0)
+        try:
+            return await client.post(
+                f"/api/v1/gift-projects/{proj_id}/story/generate",
+                headers=headers,
+            )
+        finally:
+            # Release first request to complete
+            second_request_attempted.set()
+
+    r1, r2 = await asyncio.gather(run_first(), run_second())
     statuses = sorted([r1.status_code, r2.status_code])
     assert statuses == [201, 409]
+    assert inference_call_count == 1, "Expected exactly one model inference call to occur"

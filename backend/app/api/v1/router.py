@@ -17,4 +17,3 @@ router.include_router(gift_projects_router)
 router.include_router(recommendations_router)
 router.include_router(memories_router)
 router.include_router(story_router)
-

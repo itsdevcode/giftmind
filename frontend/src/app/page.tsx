@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   checkBackendHealth,
   loginUser,
@@ -186,34 +186,64 @@ export default function HomePage() {
     loadWorkspaceData(token);
   }, [token, loadWorkspaceData]);
 
+  // Phase 4: Active project guard ref to avoid stale response races
+  const activeProjectIdRef = useRef<string>("");
+
+  const resetProjectSubresources = useCallback(() => {
+    setLatestGeneration(null);
+    setStory(null);
+    setStoryTitleEdit("");
+    setStoryDedicationEdit("");
+    setStoryBodyEdit("");
+    setStoryClosingEdit("");
+    setMemories({
+      how_we_met: "",
+      favorite_memory: "",
+      what_makes_them_special: "",
+      shared_milestone: "",
+      gift_feeling: "",
+    });
+    setHasSufficientMemories(false);
+    setMemoryGuidance("");
+    setGenerationError(null);
+    setStoryError(null);
+    setPdfError(null);
+  }, []);
+
+  const handleSelectProject = (projectId: string) => {
+    setSelectedProjectId(projectId);
+    activeProjectIdRef.current = projectId;
+    resetProjectSubresources();
+  };
+
   // Load latest recommendation, memories, and story whenever selected project changes
   useEffect(() => {
+    activeProjectIdRef.current = selectedProjectId;
     if (!token || !selectedProjectId) {
-      setLatestGeneration(null);
-      setStory(null);
-      setMemories({
-        how_we_met: "",
-        favorite_memory: "",
-        what_makes_them_special: "",
-        shared_milestone: "",
-        gift_feeling: "",
-      });
-      setHasSufficientMemories(false);
-      setMemoryGuidance("");
+      resetProjectSubresources();
       return;
     }
 
-    setGenerationError(null);
-    setStoryError(null);
+    const currentProjectId = selectedProjectId;
+    resetProjectSubresources();
 
     // 1. Fetch recommendations
-    getLatestRecommendations(selectedProjectId, token)
-      .then((data) => setLatestGeneration(data))
-      .catch(() => setLatestGeneration(null));
+    getLatestRecommendations(currentProjectId, token)
+      .then((data) => {
+        if (activeProjectIdRef.current === currentProjectId) {
+          setLatestGeneration(data);
+        }
+      })
+      .catch(() => {
+        if (activeProjectIdRef.current === currentProjectId) {
+          setLatestGeneration(null);
+        }
+      });
 
     // 2. Fetch memories
-    getMemories(selectedProjectId, token)
+    getMemories(currentProjectId, token)
       .then((data) => {
+        if (activeProjectIdRef.current !== currentProjectId) return;
         const memMap: Record<string, string> = {
           how_we_met: "",
           favorite_memory: "",
@@ -233,16 +263,21 @@ export default function HomePage() {
       });
 
     // 3. Fetch latest story keepsake
-    getLatestStory(selectedProjectId, token)
+    getLatestStory(currentProjectId, token)
       .then((data) => {
+        if (activeProjectIdRef.current !== currentProjectId) return;
         setStory(data);
         setStoryTitleEdit(data.title);
         setStoryDedicationEdit(data.dedication);
         setStoryBodyEdit(data.story_body);
         setStoryClosingEdit(data.closing_message);
       })
-      .catch(() => setStory(null));
-  }, [selectedProjectId, token]);
+      .catch(() => {
+        if (activeProjectIdRef.current === currentProjectId) {
+          setStory(null);
+        }
+      });
+  }, [selectedProjectId, token, resetProjectSubresources]);
 
   const handleSaveMemories = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
@@ -250,9 +285,11 @@ export default function HomePage() {
     setSavingMemories(true);
     setSaveMemoriesFeedback(null);
 
-    const payload = Object.entries(memories)
-      .filter(([_, ans]) => ans.trim().length > 0)
-      .map(([k, ans]) => ({ question_key: k, answer: ans }));
+    // Explicit memory deletion semantics: send all keys so blank inputs delete previously saved records
+    const payload = Object.entries(memories).map(([k, ans]) => ({
+      question_key: k,
+      answer: ans,
+    }));
 
     try {
       const res = await updateMemories(selectedProjectId, token, csrfToken, payload);
@@ -311,8 +348,22 @@ export default function HomePage() {
     }
   };
 
+  const isStoryDirty = Boolean(
+    story &&
+      (storyTitleEdit.trim() !== story.title ||
+        storyDedicationEdit.trim() !== story.dedication ||
+        storyBodyEdit.trim() !== story.story_body ||
+        storyClosingEdit.trim() !== story.closing_message)
+  );
+
   const handleDownloadPdf = async () => {
     if (!token || !selectedProjectId) return;
+    if (isStoryDirty) {
+      const proceed = window.confirm(
+        "You have unsaved story edits! The PDF keepsake will only include saved changes.\n\nClick 'Cancel' to return and click 'Save Story Edits' first, or 'OK' to proceed with the previously saved version."
+      );
+      if (!proceed) return;
+    }
     setPdfDownloading(true);
     setPdfError(null);
 
@@ -741,7 +792,7 @@ export default function HomePage() {
                     <select
                       id="select-project"
                       value={selectedProjectId}
-                      onChange={(e) => setSelectedProjectId(e.target.value)}
+                      onChange={(e) => handleSelectProject(e.target.value)}
                       className="w-full px-3 py-2 rounded-lg bg-slate-950 border border-white/10 text-white text-sm focus:outline-none focus:border-purple-500"
                     >
                       {projects.map((p) => (
@@ -1135,7 +1186,12 @@ export default function HomePage() {
                       Model: {story.model_name} &bull; Prompt {story.prompt_version} &bull; Generated {new Date(story.created_at).toLocaleTimeString()}
                     </p>
                   </div>
-                  <div className="flex items-center gap-3">
+                  <div className="flex flex-col sm:flex-row items-end sm:items-center gap-3">
+                    {isStoryDirty && (
+                      <span className="text-[11px] text-amber-300 bg-amber-500/10 border border-amber-500/20 px-2.5 py-1 rounded-md">
+                        ⚠️ Unsaved story edits
+                      </span>
+                    )}
                     <button
                       id="btn-download-pdf"
                       type="button"

@@ -34,7 +34,6 @@ def upgrade() -> None:
     sa.UniqueConstraint('gift_project_id', 'question_key', name='uq_memory_answers_project_question')
     )
     op.create_index(op.f('ix_memory_answers_gift_project_id'), 'memory_answers', ['gift_project_id'], unique=False)
-    op.create_index('ix_memory_answers_project_id', 'memory_answers', ['gift_project_id'], unique=False)
     op.create_index(op.f('ix_memory_answers_user_id'), 'memory_answers', ['user_id'], unique=False)
     op.create_table('story_keepsakes',
     sa.Column('id', sa.UUID(), nullable=False),
@@ -69,7 +68,7 @@ def downgrade() -> None:
     op.drop_index(op.f('ix_story_keepsakes_gift_project_id'), table_name='story_keepsakes')
     op.drop_table('story_keepsakes')
     op.drop_index(op.f('ix_memory_answers_user_id'), table_name='memory_answers')
-    op.drop_index('ix_memory_answers_project_id', table_name='memory_answers')
     op.drop_index(op.f('ix_memory_answers_gift_project_id'), table_name='memory_answers')
     op.drop_table('memory_answers')
+    sa.Enum(name='story_keepsake_status').drop(op.get_bind(), checkfirst=True)
     # ### end Alembic commands ###

@@ -400,9 +400,7 @@ async def download_story_pdf(
         )
 
     # Get recipient name
-    recipient_res = await db.execute(
-        select(Recipient).where(Recipient.id == project.recipient_id)
-    )
+    recipient_res = await db.execute(select(Recipient).where(Recipient.id == project.recipient_id))
     recipient = recipient_res.scalar_one_or_none()
     recipient_name = recipient.name if recipient else "Special Friend"
 

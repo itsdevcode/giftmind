@@ -91,7 +91,8 @@ class MockAIProvider(AIProvider):
             "what_makes_them_special", "a genuine warmth and kindness that lights up every room"
         )
         milestone = prompt_input.memories.get(
-            "shared_milestone", "the challenge we weathered side by side without letting go of optimism"
+            "shared_milestone",
+            "the challenge we weathered side by side without letting go of optimism",
         )
         feeling = prompt_input.memories.get(
             "gift_feeling", "cherished, deeply appreciated, and reminded that our bond is enduring"

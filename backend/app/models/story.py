@@ -80,7 +80,6 @@ class MemoryAnswer(Base):
             "question_key",
             name="uq_memory_answers_project_question",
         ),
-        Index("ix_memory_answers_project_id", "gift_project_id"),
     )
 
 

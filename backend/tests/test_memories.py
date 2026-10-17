@@ -153,9 +153,7 @@ async def test_cross_user_isolation_memories(client: AsyncClient):
     token_a, _, proj_a = await _create_test_user_and_project(
         client, "User One", "user1_mem@example.com"
     )
-    token_b, _, _ = await _create_test_user_and_project(
-        client, "User Two", "user2_mem@example.com"
-    )
+    token_b, _, _ = await _create_test_user_and_project(client, "User Two", "user2_mem@example.com")
 
     headers_b = {"Authorization": f"Bearer {token_b}"}
 
@@ -173,3 +171,74 @@ async def test_cross_user_isolation_memories(client: AsyncClient):
         headers=headers_b,
     )
     assert res_put.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_clear_memory_answer_deletes_record_and_prevents_stale_use(client: AsyncClient):
+    """Verify that submitting a blank answer deletes the saved memory and prevents it from being used."""
+    token, _, proj_id = await _create_test_user_and_project(
+        client, "Grace Hopper", "grace_memory_clear@example.com"
+    )
+    headers = {"Authorization": f"Bearer {token}"}
+
+    # 1. Save two substantive memories
+    save_payload = {
+        "answers": [
+            {
+                "question_key": "how_we_met",
+                "answer": "We met in the Navy computer laboratory debugging the Mark I electro-mechanical computer.",
+            },
+            {
+                "question_key": "favorite_memory",
+                "answer": "Finding the famous moth trapped in relay number 70 and pasting it into the daily engineering logbook.",
+            },
+        ]
+    }
+    save_res = await client.put(
+        f"/api/v1/gift-projects/{proj_id}/memories",
+        json=save_payload,
+        headers=headers,
+    )
+    assert save_res.status_code == 200
+    assert len(save_res.json()["answers"]) == 2
+    assert save_res.json()["has_sufficient_input"] is True
+
+    # 2. Clear 'how_we_met' by submitting an empty answer
+    clear_payload = {
+        "answers": [
+            {
+                "question_key": "how_we_met",
+                "answer": "   ",  # whitespace only
+            }
+        ]
+    }
+    clear_res = await client.put(
+        f"/api/v1/gift-projects/{proj_id}/memories",
+        json=clear_payload,
+        headers=headers,
+    )
+    assert clear_res.status_code == 200
+    remaining_answers = clear_res.json()["answers"]
+    assert len(remaining_answers) == 1
+    assert remaining_answers[0]["question_key"] == "favorite_memory"
+    # Clearing down to 1 memory drops below the 2-memory sufficiency threshold
+    assert clear_res.json()["has_sufficient_input"] is False
+
+    # 3. Reload memories via GET and verify 'how_we_met' is completely gone
+    get_res = await client.get(
+        f"/api/v1/gift-projects/{proj_id}/memories",
+        headers=headers,
+    )
+    assert get_res.status_code == 200
+    persisted = get_res.json()["answers"]
+    assert len(persisted) == 1
+    assert persisted[0]["question_key"] == "favorite_memory"
+    assert not any(a["question_key"] == "how_we_met" for a in persisted)
+
+    # 4. Verify story generation cannot proceed with cleared insufficient memories
+    gen_res = await client.post(
+        f"/api/v1/gift-projects/{proj_id}/story/generate",
+        headers=headers,
+    )
+    assert gen_res.status_code == 400
+    assert "Please provide a little more detail" in gen_res.json()["detail"]

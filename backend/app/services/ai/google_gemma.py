@@ -338,7 +338,9 @@ class GoogleGemmaAIProvider(AIProvider):
 
                 raw_text = (response.text or "").strip()
                 if not raw_text:
-                    raise AIResponseValidationError("Hosted Gemma returned an empty story response.")
+                    raise AIResponseValidationError(
+                        "Hosted Gemma returned an empty story response."
+                    )
 
                 json_text = _extract_json_block(raw_text)
 
@@ -405,7 +407,9 @@ class GoogleGemmaAIProvider(AIProvider):
                             else (base_backoff * (2**attempt))
                         )
                         backoff = min(backoff, 8.0)
-                        logger.info("Retrying story generation after %.1fs due to rate limit...", backoff)
+                        logger.info(
+                            "Retrying story generation after %.1fs due to rate limit...", backoff
+                        )
                         await asyncio.sleep(backoff)
                         continue
 
@@ -420,7 +424,9 @@ class GoogleGemmaAIProvider(AIProvider):
                     )
                     if attempt < max_retries:
                         backoff = base_backoff * (2**attempt)
-                        logger.info("Retrying story generation after %.1fs due to server error...", backoff)
+                        logger.info(
+                            "Retrying story generation after %.1fs due to server error...", backoff
+                        )
                         await asyncio.sleep(backoff)
                         continue
                     raise AIProviderUnavailableError(
@@ -439,7 +445,9 @@ class GoogleGemmaAIProvider(AIProvider):
                 raise
 
             except Exception as exc:
-                logger.error("Unexpected error in hosted Gemma story generation: %s", type(exc).__name__)
+                logger.error(
+                    "Unexpected error in hosted Gemma story generation: %s", type(exc).__name__
+                )
                 raise AIProviderError(
                     f"Unexpected AI provider error: {type(exc).__name__}"
                 ) from exc
