@@ -20,6 +20,7 @@ from app.services.ai.exceptions import (
     AIProviderUnavailableError,
     AIResponseValidationError,
 )
+from app.services.ai.mock import MockAIProvider
 
 
 async def _create_user_and_project(
@@ -258,23 +259,63 @@ async def test_ai_malformed_json_handling(client: AsyncClient) -> None:
 @pytest.mark.asyncio
 async def test_concurrent_generation_simultaneous_requests(client: AsyncClient) -> None:
     """When two simultaneous generation requests hit the same gift project,
-    the row lock and pending check guarantee only one request succeeds (201)
-    and the other receives 409 Conflict.
+    the PostgreSQL partial unique index and atomic claim guarantee only one request succeeds (201)
+    and the other receives 409 Conflict. Only the claim winner invokes the AI provider.
+    After the winning generation completes, subsequent generation requests succeed.
     """
     token, _, proj_id = await _create_user_and_project(
         client, "Simultaneous Racer", "simultaneous_racer@example.com"
     )
     headers = {"Authorization": f"Bearer {token}"}
 
-    async def _post_gen():
-        return await client.post(
-            f"/api/v1/gift-projects/{proj_id}/recommendations/generate",
-            headers=headers,
-        )
+    first_started = asyncio.Event()
+    second_arrived = asyncio.Event()
+    provider_call_count = 0
 
-    res1, res2 = await asyncio.gather(_post_gen(), _post_gen())
+    real_generate = MockAIProvider.generate_gift_recommendations
+
+    async def synchronized_generate(self, prompt_input):
+        nonlocal provider_call_count
+        provider_call_count += 1
+        first_started.set()
+        # Wait until the second request has arrived and received its response
+        await asyncio.wait_for(second_arrived.wait(), timeout=5.0)
+        return await real_generate(self, prompt_input)
+
+    with patch.object(
+        MockAIProvider,
+        "generate_gift_recommendations",
+        new=synchronized_generate,
+    ):
+
+        async def _req1():
+            return await client.post(
+                f"/api/v1/gift-projects/{proj_id}/recommendations/generate",
+                headers=headers,
+            )
+
+        async def _req2():
+            # Guarantee Request 1 has started model inference (and committed the pending claim)
+            await asyncio.wait_for(first_started.wait(), timeout=5.0)
+            res = await client.post(
+                f"/api/v1/gift-projects/{proj_id}/recommendations/generate",
+                headers=headers,
+            )
+            second_arrived.set()
+            return res
+
+        res1, res2 = await asyncio.gather(_req1(), _req2())
+
     status_codes = sorted([res1.status_code, res2.status_code])
     assert status_codes == [201, 409]
+    assert provider_call_count == 1
+
+    # Verify a new request can generate recommendations after the first finishes
+    res3 = await client.post(
+        f"/api/v1/gift-projects/{proj_id}/recommendations/generate",
+        headers=headers,
+    )
+    assert res3.status_code == 201
 
 
 @pytest.mark.asyncio

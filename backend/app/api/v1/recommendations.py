@@ -5,6 +5,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_settings, get_current_user
@@ -69,7 +70,7 @@ async def generate_recommendations(
             detail="Gift project not found.",
         )
 
-    # 2. Check for active pending generation; recover stale/abandoned ones (> 2 minutes old)
+    # 2. Check for active pending generation; recover stale/abandoned ones (> timeout + 30s old)
     active_gen_res = await db.execute(
         select(GiftRecommendationGeneration).where(
             GiftRecommendationGeneration.gift_project_id == project_id,
@@ -78,7 +79,6 @@ async def generate_recommendations(
     )
     active_gen = active_gen_res.scalar_one_or_none()
     if active_gen is not None:
-        # Check staleness: if pending for longer than timeout + 30s buffer, recover it
         stale_threshold = datetime.now(UTC) - timedelta(
             seconds=settings.AI_REQUEST_TIMEOUT_SECONDS + 30.0
         )
@@ -125,7 +125,7 @@ async def generate_recommendations(
         currency=project.currency,
     )
 
-    # 5. Create pending generation record
+    # 5. Atomically claim generation slot using PostgreSQL-enforced partial unique index
     generation = GiftRecommendationGeneration(
         gift_project_id=project.id,
         user_id=current_user.id,
@@ -135,8 +135,17 @@ async def generate_recommendations(
         status=RecommendationGenerationStatus.pending,
     )
     db.add(generation)
-    await db.commit()
-    await db.refresh(generation)
+    try:
+        # Commit immediately so the claim is active, visible, and row locks are released
+        # before slow model inference begins
+        await db.commit()
+        await db.refresh(generation)
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="A recommendation generation is currently in progress for this gift project.",
+        ) from None
 
     # 6. Execute inference and handle failures safely without partial recommendation writes
     try:

@@ -100,6 +100,12 @@ class GiftRecommendationGeneration(Base):
             "gift_project_id",
             "created_at",
         ),
+        Index(
+            "uq_gift_recommendation_generations_project_pending",
+            "gift_project_id",
+            unique=True,
+            postgresql_where=(status == RecommendationGenerationStatus.pending),
+        ),
     )
 
 
