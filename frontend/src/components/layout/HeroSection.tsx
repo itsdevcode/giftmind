@@ -1,7 +1,6 @@
-"use client";
-
+import Image from "next/image";
 import { Gift, BookHeart, ShieldCheck, ArrowRight, Sparkles } from "lucide-react";
-import { IndianHeritageArtwork, HeritageArch } from "@/components/illustrations/CulturalMotifs";
+import { HeritageArch } from "@/components/illustrations/CulturalMotifs";
 
 interface HeroSectionProps {
   onSelectGifts: () => void;
@@ -76,19 +75,44 @@ export function HeroSection({
           </div>
         </div>
 
-        {/* Right Column: Indian Cultural Artwork & Keepsake Silhouette Panel */}
+        {/* Right Column: Cultural Heritage Illustration Showcase Panel */}
         <div className="lg:col-span-5 flex justify-center">
-          <div className="relative w-full max-w-sm sm:max-w-md p-3 sm:p-5 rounded-2xl bg-gradient-to-b from-white/[0.04] to-transparent border border-white/[0.08] shadow-2xl backdrop-blur-sm">
-            {/* Subtle top pill accent */}
-            <div className="flex items-center justify-between pb-2 mb-2 border-b border-white/[0.06] text-[11px] text-slate-400 font-medium">
-              <span className="flex items-center gap-1.5 text-amber-300">
-                <Sparkles className="w-3 h-3 text-amber-400" />
-                Heritage AI Studio
+          <div className="relative w-full max-w-sm sm:max-w-md rounded-2xl bg-gradient-to-b from-white/[0.06] to-white/[0.02] p-1.5 sm:p-2 border border-amber-500/25 shadow-2xl shadow-amber-950/30 backdrop-blur-md group">
+            {/* Ambient card back glow */}
+            <div className="absolute -inset-1 bg-gradient-to-r from-amber-500/20 via-violet-600/15 to-amber-500/10 rounded-2xl blur-lg -z-10 opacity-70 group-hover:opacity-100 transition-opacity" />
+
+            {/* Inner Header Bar */}
+            <div className="flex items-center justify-between px-3 py-2 rounded-t-xl bg-[#0b0f17]/80 border-b border-white/[0.06] text-[11px] text-slate-300">
+              <span className="flex items-center gap-1.5 font-medium text-amber-300">
+                <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                Cultural Heritage &amp; Keepsakes
               </span>
-              <span className="text-slate-500 font-mono">Gemma 4 • Keepsake</span>
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-amber-500/10 border border-amber-500/20 text-amber-300 font-mono">
+                Gemma 4 AI
+              </span>
             </div>
 
-            <IndianHeritageArtwork className="w-full" />
+            {/* Artwork Frame */}
+            <div className="relative overflow-hidden rounded-b-xl border border-white/[0.05] bg-[#080b12] aspect-[1024/372]">
+              <Image
+                src="/images/incredible_india_heritage.png"
+                alt="Incredible India cultural heritage illustration featuring decorated ceremonial elephant, Taj Mahal, Red Fort, India Gate, and Qutub Minar"
+                fill
+                priority
+                sizes="(max-width: 768px) 100vw, (max-width: 1200px) 45vw, 420px"
+                className="object-cover rounded-b-xl transform group-hover:scale-[1.02] transition-transform duration-500"
+              />
+              {/* Subtle luxury gradient vignette overlay for seamless dark theme harmony */}
+              <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-[#090c13]/70 via-transparent to-black/10" />
+              
+              {/* Floating caption chip */}
+              <div className="absolute bottom-2.5 left-3 right-3 flex items-center justify-between pointer-events-none">
+                <span className="text-[10px] font-medium text-amber-100 bg-black/60 backdrop-blur-md px-2.5 py-1 rounded-full border border-white/10 shadow-sm">
+                  Celebrations • Milestones • Memories
+                </span>
+                <span className="w-2 h-2 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.8)]" />
+              </div>
+            </div>
           </div>
         </div>
       </div>
