@@ -61,6 +61,12 @@ class Settings(BaseSettings):
     CSRF_COOKIE_NAME: str = "giftmind_csrf_token"
     CSRF_HEADER_NAME: str = "x-csrf-token"
 
+    # AI Provider & Inference Configuration
+    AI_PROVIDER: Literal["ollama", "mock"] = "ollama"
+    OLLAMA_BASE_URL: str = "http://localhost:11434"
+    OLLAMA_MODEL: str = "gemma2:2b"
+    AI_REQUEST_TIMEOUT_SECONDS: float = 45.0
+
     @model_validator(mode="after")
     def validate_production_security(self) -> "Settings":
         """Enforce strict cryptographic secret standards in production environments."""

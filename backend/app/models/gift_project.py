@@ -23,6 +23,7 @@ from app.db.session import Base
 
 if TYPE_CHECKING:
     from app.models.recipient import Recipient
+    from app.models.recommendation import GiftRecommendation, GiftRecommendationGeneration
     from app.models.user import User
 
 
@@ -94,6 +95,18 @@ class GiftProject(Base):
     # Relationships
     user: Mapped["User"] = relationship("User", back_populates="gift_projects")
     recipient: Mapped["Recipient"] = relationship("Recipient", back_populates="gift_projects")
+    recommendation_generations: Mapped[list["GiftRecommendationGeneration"]] = relationship(
+        "GiftRecommendationGeneration",
+        back_populates="gift_project",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+    recommendations: Mapped[list["GiftRecommendation"]] = relationship(
+        "GiftRecommendation",
+        back_populates="gift_project",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
 
     __table_args__ = (
         CheckConstraint(

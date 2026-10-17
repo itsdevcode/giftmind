@@ -12,7 +12,7 @@ Developed for **Hacktoberfest 2026 Week 2** following production-grade software 
 
 To ensure engineering transparency and integrity, features are strictly categorized by implementation status:
 
-### Implemented (Phase 1: Production Foundation & Phase 2: Auth and Gift Management)
+### Implemented (Phase 1, Phase 2, and Phase 3: AI Gift Recommendations)
 - [x] **Monorepo Architecture**: Clean separation between `backend/`, `frontend/`, `docs/`, and container infrastructure.
 - [x] **FastAPI Application Factory**: Structured configuration with `pydantic-settings`, async lifespan management, CORS filtering, and centralized error handling.
 - [x] **Health Check Endpoint**: Available at `GET /health` returning `{ "status": "ok", "service": "giftmind-api" }`.
@@ -32,12 +32,19 @@ To ensure engineering transparency and integrity, features are strictly categori
   - Full CRUD operations with foreign key integrity to user and recipient.
   - Recipient ownership verification and budget constraint validation (`budget_min >= 0`, `budget_max >= budget_min`).
   - Endpoints: `POST /api/v1/gift-projects`, `GET /api/v1/gift-projects`, `GET /api/v1/gift-projects/{id}`, `PUT /api/v1/gift-projects/{id}`, `DELETE /api/v1/gift-projects/{id}`.
-- [x] **Next.js 14 App Router Frontend**: TypeScript in strict mode, responsive Tailwind CSS dark-theme layout, and centralized API client.
+- [x] **Phase 3: AI Recommendation Engine (Ollama / Gemma 2 2B)**:
+  - Abstract AI provider interface (`AIProvider`) decoupling business logic from inference backend.
+  - Hardened prompt synthesis with `<untrusted_user_notes>` boundary encapsulation against prompt injection.
+  - Strict JSON schema enforcement delivering exactly 3 distinct, budget-aligned recommendations with personalized rationale and presentation ideas.
+  - Atomic persistence in PostgreSQL (`gift_recommendation_generations` and `gift_recommendations`) with transaction rollback on model failure.
+  - Endpoints: `POST /api/v1/gift-projects/{id}/recommendations/generate`, `GET /api/v1/gift-projects/{id}/recommendations`.
+  - Smoke testing CLI: `backend/scripts/smoke_ai_inference.py`.
+- [x] **Next.js 14 App Router Frontend**:
+  - TypeScript in strict mode, responsive Tailwind CSS dark-theme layout, and centralized API client.
+  - Full authentication workflow, recipient creation, gift project management, and AI recommendation cards.
 - [x] **CI Pipeline**: GitHub Actions workflow running backend tests, Ruff linting, frontend linting, strict type checks, and Next.js production builds.
 
 ### Planned (Future Phases — Do Not Use Prematurely)
-- [ ] **Phase 3 — Memory & Preference Engine**: Memory ingestion, tagging, and preference vector search.
-- [ ] **Phase 3 — AI Gift Recommendations**: Open-weight model integration (Gemma) via an Ollama-compatible inference adapter.
 - [ ] **Phase 4 — Keepsake & Story Generation**: AI narrative generation turning curated memories into personalized gift books.
 - [ ] **Phase 4 — PDF Generation & Digital Keepsakes**: High-fidelity export of keepsakes for physical or digital delivery.
 - [ ] **Phase 5 — Private Object Storage**: S3-compatible asset storage for personal photos and memories.
@@ -297,7 +304,74 @@ All gift project endpoints require `Authorization: Bearer <access_token>`.
 
 ---
 
-### 3. Frontend Setup
+#### 4. AI Gift Recommendations (`/api/v1/gift-projects/{project_id}/recommendations`)
+Endpoints require `Authorization: Bearer <access_token>`.
+
+- **`POST /api/v1/gift-projects/{project_id}/recommendations/generate`**
+  - **Headers**: `Authorization: Bearer <access_token>`, `X-CSRF-Token: <csrf_token>`
+  - **Behavior**:
+    - Validates ownership of `gift_project_id`.
+    - Checks for pending generations (prevents duplicate triggers with `409 Conflict`).
+    - Synthesizes prompt with boundary fences (`<untrusted_user_notes>`) to protect against prompt injection.
+    - Queries configured AI Provider (Ollama / Gemma 2 2B or deterministic mock for test environments).
+    - Validates exactly 3 distinct, budget-aligned recommendations via Pydantic grammar rules.
+    - Persists generation record and 3 recommendation entries atomically in PostgreSQL.
+  - **Response (201 Created)**:
+    ```json
+    {
+      "id": "27015db2-0d12-4fe0-9428-1ef96ca26087",
+      "gift_project_id": "b3e3e012-7bb3-455a-9426-5b23d5da251a",
+      "user_id": "e96b9f2e-bf73-45bb-b3b3-8ec23c4a243f",
+      "provider": "ollama",
+      "model": "gemma2:2b",
+      "prompt_version": "v1",
+      "status": "completed",
+      "error_message": null,
+      "recommendations": [
+        {
+          "id": "e8a931ca-74df-41c3-a3d1-dcf2b92a40e1",
+          "title": "Artisanal Pour-Over Coffee Starter Kit",
+          "category": "Food & Beverage",
+          "estimated_budget": "65.00",
+          "currency": "USD",
+          "personalization_reason": "Matches their interest in artisanal brewing and high-quality morning rituals.",
+          "presentation_idea": "Box with fresh whole-bean single origin coffee and handwritten recipe note."
+        }
+      ]
+    }
+    ```
+
+- **`GET /api/v1/gift-projects/{project_id}/recommendations`**
+  - **Headers**: `Authorization: Bearer <access_token>`
+  - **Response (200 OK)**: Retrieves the latest completed recommendation batch for the given project. Returns `404 Not Found` if no recommendations exist or if the project belongs to another user.
+
+---
+
+### 3. Local AI Inference Setup (Ollama + Gemma 2 2B)
+
+GiftMind uses open-weight **Gemma 2 2B** running locally via Ollama to protect user privacy and avoid costly proprietary APIs.
+
+1. Install [Ollama](https://ollama.com):
+   ```bash
+   curl -fsSL https://ollama.com/install.sh | sh
+   ```
+2. Pull the optimized Gemma 2 2B model (~1.6 GB):
+   ```bash
+   ollama pull gemma2:2b
+   ```
+3. Start the Ollama server:
+   ```bash
+   ollama serve
+   ```
+4. Verify inference connectivity using the smoke test script:
+   ```bash
+   cd backend
+   uv run python scripts/smoke_ai_inference.py --model gemma2:2b
+   ```
+
+---
+
+### 4. Frontend Setup
 
 1. Navigate to the frontend directory:
    ```bash
