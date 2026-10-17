@@ -13,11 +13,20 @@ import {
   createGiftProject,
   generateRecommendations,
   getLatestRecommendations,
+  getMemories,
+  updateMemories,
+  generateStory,
+  getLatestStory,
+  updateStory,
+  downloadStoryPdf,
   type HealthCheckResponse,
   type User,
   type Recipient,
   type GiftProject,
   type RecommendationGeneration,
+  type MemoryAnswer,
+  type MemoryAnswersListResponse,
+  type StoryKeepsake,
 } from "@/lib/api";
 
 export default function HomePage() {
@@ -59,6 +68,32 @@ export default function HomePage() {
   const [latestGeneration, setLatestGeneration] = useState<RecommendationGeneration | null>(null);
   const [generating, setGenerating] = useState(false);
   const [generationError, setGenerationError] = useState<string | null>(null);
+
+  // Phase 4: Guided Memories State
+  const [memories, setMemories] = useState<Record<string, string>>({
+    how_we_met: "",
+    favorite_memory: "",
+    what_makes_them_special: "",
+    shared_milestone: "",
+    gift_feeling: "",
+  });
+  const [hasSufficientMemories, setHasSufficientMemories] = useState(false);
+  const [memoryGuidance, setMemoryGuidance] = useState("");
+  const [savingMemories, setSavingMemories] = useState(false);
+  const [saveMemoriesFeedback, setSaveMemoriesFeedback] = useState<string | null>(null);
+
+  // Phase 4: Story Keepsake State
+  const [story, setStory] = useState<StoryKeepsake | null>(null);
+  const [storyLoading, setStoryLoading] = useState(false);
+  const [storyError, setStoryError] = useState<string | null>(null);
+  const [storyTitleEdit, setStoryTitleEdit] = useState("");
+  const [storyDedicationEdit, setStoryDedicationEdit] = useState("");
+  const [storyBodyEdit, setStoryBodyEdit] = useState("");
+  const [storyClosingEdit, setStoryClosingEdit] = useState("");
+  const [storySaving, setStorySaving] = useState(false);
+  const [storySaveSuccess, setStorySaveSuccess] = useState(false);
+  const [pdfDownloading, setPdfDownloading] = useState(false);
+  const [pdfError, setPdfError] = useState<string | null>(null);
 
   // Helper to extract CSRF cookie from document.cookie if available
   const getCsrfCookie = (): string | null => {
@@ -151,17 +186,156 @@ export default function HomePage() {
     loadWorkspaceData(token);
   }, [token, loadWorkspaceData]);
 
-  // Load latest recommendation whenever selected project changes
+  // Load latest recommendation, memories, and story whenever selected project changes
   useEffect(() => {
     if (!token || !selectedProjectId) {
       setLatestGeneration(null);
+      setStory(null);
+      setMemories({
+        how_we_met: "",
+        favorite_memory: "",
+        what_makes_them_special: "",
+        shared_milestone: "",
+        gift_feeling: "",
+      });
+      setHasSufficientMemories(false);
+      setMemoryGuidance("");
       return;
     }
+
     setGenerationError(null);
+    setStoryError(null);
+
+    // 1. Fetch recommendations
     getLatestRecommendations(selectedProjectId, token)
       .then((data) => setLatestGeneration(data))
       .catch(() => setLatestGeneration(null));
+
+    // 2. Fetch memories
+    getMemories(selectedProjectId, token)
+      .then((data) => {
+        const memMap: Record<string, string> = {
+          how_we_met: "",
+          favorite_memory: "",
+          what_makes_them_special: "",
+          shared_milestone: "",
+          gift_feeling: "",
+        };
+        for (const ans of data.answers) {
+          memMap[ans.question_key] = ans.answer;
+        }
+        setMemories(memMap);
+        setHasSufficientMemories(data.has_sufficient_input);
+        setMemoryGuidance(data.guidance_message);
+      })
+      .catch(() => {
+        // No memories yet
+      });
+
+    // 3. Fetch latest story keepsake
+    getLatestStory(selectedProjectId, token)
+      .then((data) => {
+        setStory(data);
+        setStoryTitleEdit(data.title);
+        setStoryDedicationEdit(data.dedication);
+        setStoryBodyEdit(data.story_body);
+        setStoryClosingEdit(data.closing_message);
+      })
+      .catch(() => setStory(null));
   }, [selectedProjectId, token]);
+
+  const handleSaveMemories = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!token || !csrfToken || !selectedProjectId) return;
+    setSavingMemories(true);
+    setSaveMemoriesFeedback(null);
+
+    const payload = Object.entries(memories)
+      .filter(([_, ans]) => ans.trim().length > 0)
+      .map(([k, ans]) => ({ question_key: k, answer: ans }));
+
+    try {
+      const res = await updateMemories(selectedProjectId, token, csrfToken, payload);
+      setHasSufficientMemories(res.has_sufficient_input);
+      setMemoryGuidance(res.guidance_message);
+      setSaveMemoriesFeedback("✓ Memories saved successfully!");
+      setTimeout(() => setSaveMemoriesFeedback(null), 4000);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Failed to save memories";
+      setSaveMemoriesFeedback(`Error: ${msg}`);
+    } finally {
+      setSavingMemories(false);
+    }
+  };
+
+  const handleGenerateStory = async () => {
+    if (!token || !csrfToken || !selectedProjectId) return;
+    setStoryLoading(true);
+    setStoryError(null);
+
+    try {
+      const newStory = await generateStory(selectedProjectId, token, csrfToken);
+      setStory(newStory);
+      setStoryTitleEdit(newStory.title);
+      setStoryDedicationEdit(newStory.dedication);
+      setStoryBodyEdit(newStory.story_body);
+      setStoryClosingEdit(newStory.closing_message);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Failed to generate story";
+      setStoryError(msg);
+    } finally {
+      setStoryLoading(false);
+    }
+  };
+
+  const handleSaveEditedStory = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!token || !csrfToken || !selectedProjectId) return;
+    setStorySaving(true);
+    setStorySaveSuccess(false);
+
+    try {
+      const updated = await updateStory(selectedProjectId, token, csrfToken, {
+        title: storyTitleEdit.trim(),
+        dedication: storyDedicationEdit.trim(),
+        story_body: storyBodyEdit.trim(),
+        closing_message: storyClosingEdit.trim(),
+      });
+      setStory(updated);
+      setStorySaveSuccess(true);
+      setTimeout(() => setStorySaveSuccess(false), 4000);
+    } catch (err: unknown) {
+      alert(err instanceof Error ? err.message : "Failed to save story changes");
+    } finally {
+      setStorySaving(false);
+    }
+  };
+
+  const handleDownloadPdf = async () => {
+    if (!token || !selectedProjectId) return;
+    setPdfDownloading(true);
+    setPdfError(null);
+
+    try {
+      const blob = await downloadStoryPdf(selectedProjectId, token);
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      const rec = recipients.find((r) => r.id === selectedRecipientId);
+      const recName = rec?.name ? rec.name.replace(/\s+/g, "_") : "Keepsake";
+      a.download = `GiftMind_Keepsake_${recName}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Failed to download PDF";
+      setPdfError(msg);
+    } finally {
+      setPdfDownloading(false);
+    }
+  };
+
 
   const handleAuthSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -309,7 +483,7 @@ export default function HomePage() {
 
         {/* Phase Badge */}
         <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full border border-purple-500/30 bg-purple-500/10 text-purple-300 text-xs font-semibold uppercase tracking-wider mb-6">
-          <span>🚀 Phase 3 Active: AI Gift Recommendations</span>
+          <span>📖 Phase 4 Active: Memory Interview, AI Story & PDF Keepsake</span>
           <span className="text-slate-400">•</span>
           <span className="text-slate-300">Hosted Gemma 4 26B Engine</span>
         </div>
@@ -771,9 +945,314 @@ export default function HomePage() {
                 </div>
               </div>
             )}
+
+            {/* PHASE 4: GUIDED MEMORY INTERVIEW */}
+            {selectedProjectId && (
+              <div id="memory-interview-section" className="pt-10 border-t border-white/10 space-y-6">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                  <div>
+                    <div className="inline-flex items-center gap-1.5 text-xs font-semibold text-pink-400 mb-1 uppercase tracking-wider">
+                      <span>🕊️</span> Step 3 &bull; Guided Memory Interview
+                    </div>
+                    <h2 className="text-2xl font-bold text-white tracking-tight">
+                      Share Meaningful Memories
+                    </h2>
+                    <p className="text-xs text-slate-400 mt-1">
+                      Answer the five prompts below to ground Gemma 4&apos;s narrative story strictly in your authentic shared moments.
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <span
+                      className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold ${
+                        hasSufficientMemories
+                          ? "bg-emerald-500/10 border border-emerald-500/30 text-emerald-300"
+                          : "bg-amber-500/10 border border-amber-500/30 text-amber-300"
+                      }`}
+                    >
+                      <span>{hasSufficientMemories ? "✓" : "!"}</span>
+                      {hasSufficientMemories ? "Story Input Ready" : "Need More Detail"}
+                    </span>
+                  </div>
+                </div>
+
+                {memoryGuidance && (
+                  <div className={`p-3.5 rounded-xl text-xs border ${
+                    hasSufficientMemories
+                      ? "bg-emerald-950/20 border-emerald-500/30 text-emerald-200"
+                      : "bg-amber-950/20 border-amber-500/30 text-amber-200"
+                  }`}>
+                    {memoryGuidance}
+                  </div>
+                )}
+
+                <form onSubmit={handleSaveMemories} className="space-y-4">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {/* Prompt 1 */}
+                    <div className="p-4 rounded-xl border border-white/10 bg-slate-900/60 space-y-2">
+                      <label htmlFor="memory-how-we-met" className="block text-xs font-semibold text-purple-300">
+                        1. How did you first meet this person?
+                      </label>
+                      <textarea
+                        id="memory-how-we-met"
+                        rows={3}
+                        placeholder="Tell the story of that first encounter or where your paths crossed..."
+                        value={memories.how_we_met || ""}
+                        onChange={(e) =>
+                          setMemories((prev) => ({ ...prev, how_we_met: e.target.value }))
+                        }
+                        className="w-full px-3 py-2 rounded-lg bg-slate-950/70 border border-white/10 text-white placeholder-slate-500 text-xs focus:outline-none focus:border-purple-500"
+                      />
+                    </div>
+
+                    {/* Prompt 2 */}
+                    <div className="p-4 rounded-xl border border-white/10 bg-slate-900/60 space-y-2">
+                      <label htmlFor="memory-favorite-memory" className="block text-xs font-semibold text-purple-300">
+                        2. What is your favorite memory together?
+                      </label>
+                      <textarea
+                        id="memory-favorite-memory"
+                        rows={3}
+                        placeholder="A trip, late-night conversation, celebration, or quiet moment..."
+                        value={memories.favorite_memory || ""}
+                        onChange={(e) =>
+                          setMemories((prev) => ({ ...prev, favorite_memory: e.target.value }))
+                        }
+                        className="w-full px-3 py-2 rounded-lg bg-slate-950/70 border border-white/10 text-white placeholder-slate-500 text-xs focus:outline-none focus:border-purple-500"
+                      />
+                    </div>
+
+                    {/* Prompt 3 */}
+                    <div className="p-4 rounded-xl border border-white/10 bg-slate-900/60 space-y-2">
+                      <label htmlFor="memory-what-makes-special" className="block text-xs font-semibold text-purple-300">
+                        3. What makes this person special to you?
+                      </label>
+                      <textarea
+                        id="memory-what-makes-special"
+                        rows={3}
+                        placeholder="Their humor, resilience, empathy, kindness, or quirky charm..."
+                        value={memories.what_makes_them_special || ""}
+                        onChange={(e) =>
+                          setMemories((prev) => ({ ...prev, what_makes_them_special: e.target.value }))
+                        }
+                        className="w-full px-3 py-2 rounded-lg bg-slate-950/70 border border-white/10 text-white placeholder-slate-500 text-xs focus:outline-none focus:border-purple-500"
+                      />
+                    </div>
+
+                    {/* Prompt 4 */}
+                    <div className="p-4 rounded-xl border border-white/10 bg-slate-900/60 space-y-2">
+                      <label htmlFor="memory-shared-milestone" className="block text-xs font-semibold text-purple-300">
+                        4. What challenge, milestone or experience have you shared?
+                      </label>
+                      <textarea
+                        id="memory-shared-milestone"
+                        rows={3}
+                        placeholder="A hurdle you navigated together, a life milestone, or a shared triumph..."
+                        value={memories.shared_milestone || ""}
+                        onChange={(e) =>
+                          setMemories((prev) => ({ ...prev, shared_milestone: e.target.value }))
+                        }
+                        className="w-full px-3 py-2 rounded-lg bg-slate-950/70 border border-white/10 text-white placeholder-slate-500 text-xs focus:outline-none focus:border-purple-500"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Prompt 5 Full Width */}
+                  <div className="p-4 rounded-xl border border-white/10 bg-slate-900/60 space-y-2">
+                    <label htmlFor="memory-gift-feeling" className="block text-xs font-semibold text-purple-300">
+                      5. What do you want this person to remember or feel when receiving this gift?
+                    </label>
+                    <textarea
+                      id="memory-gift-feeling"
+                      rows={2}
+                      placeholder="e.g. Cherished, seen, reminded of their strength, or deeply appreciated..."
+                      value={memories.gift_feeling || ""}
+                      onChange={(e) =>
+                        setMemories((prev) => ({ ...prev, gift_feeling: e.target.value }))
+                      }
+                      className="w-full px-3 py-2 rounded-lg bg-slate-950/70 border border-white/10 text-white placeholder-slate-500 text-xs focus:outline-none focus:border-purple-500"
+                    />
+                  </div>
+
+                  <div className="flex flex-col sm:flex-row items-center justify-between gap-4 pt-2">
+                    <div className="text-xs text-slate-400">
+                      {saveMemoriesFeedback && (
+                        <span className={saveMemoriesFeedback.startsWith("✓") ? "text-emerald-400 font-medium" : "text-rose-400 font-medium"}>
+                          {saveMemoriesFeedback}
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-3 w-full sm:w-auto">
+                      <button
+                        id="btn-save-memories"
+                        type="submit"
+                        disabled={savingMemories}
+                        className="flex-1 sm:flex-initial px-5 py-2.5 rounded-xl border border-white/15 bg-slate-800 hover:bg-slate-700 text-white text-xs font-semibold transition-colors disabled:opacity-50"
+                      >
+                        {savingMemories ? "Saving..." : "Save Memories"}
+                      </button>
+                      <button
+                        id="btn-generate-story"
+                        type="button"
+                        onClick={handleGenerateStory}
+                        disabled={storyLoading || !hasSufficientMemories}
+                        className="flex-1 sm:flex-initial px-6 py-2.5 rounded-xl bg-gradient-to-r from-pink-600 to-purple-600 hover:from-pink-500 hover:to-purple-500 text-white text-xs font-bold transition-all shadow-lg shadow-pink-600/25 disabled:opacity-50 flex items-center justify-center gap-2"
+                      >
+                        {storyLoading ? (
+                          <>
+                            <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                            <span>Crafting Story with Gemma (30-60s)...</span>
+                          </>
+                        ) : (
+                          <>
+                            <span>✨ Generate AI Story Keepsake</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  </div>
+                </form>
+
+                {storyError && (
+                  <div id="story-error-message" className="p-4 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs">
+                    {storyError}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* PHASE 4: STORY KEEPSAKE PREVIEW, EDITING & PDF DOWNLOAD */}
+            {story && (
+              <div id="story-keepsake-container" className="pt-10 border-t border-white/10 space-y-6">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                  <div>
+                    <div className="inline-flex items-center gap-1.5 text-xs font-semibold text-amber-400 mb-1 uppercase tracking-wider">
+                      <span>📜</span> Step 4 &bull; Personalized Narrative Keepsake
+                    </div>
+                    <h2 className="text-2xl font-bold text-white tracking-tight flex items-center gap-2">
+                      <span>&ldquo;</span>{story.title}<span>&rdquo;</span>
+                    </h2>
+                    <p className="text-xs text-slate-400 mt-1 font-mono">
+                      Model: {story.model_name} &bull; Prompt {story.prompt_version} &bull; Generated {new Date(story.created_at).toLocaleTimeString()}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <button
+                      id="btn-download-pdf"
+                      type="button"
+                      onClick={handleDownloadPdf}
+                      disabled={pdfDownloading}
+                      className="px-5 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-500 text-slate-950 font-bold text-xs transition-all shadow-lg shadow-amber-600/30 flex items-center gap-2 disabled:opacity-50"
+                    >
+                      {pdfDownloading ? (
+                        <>
+                          <div className="w-3.5 h-3.5 border-2 border-slate-950/30 border-t-slate-950 rounded-full animate-spin" />
+                          <span>Generating PDF...</span>
+                        </>
+                      ) : (
+                        <>
+                          <span>📥 Download PDF Keepsake</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
+
+                {pdfError && (
+                  <div className="p-3 rounded-lg bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs">
+                    {pdfError}
+                  </div>
+                )}
+
+                {/* Editable Story Form */}
+                <form onSubmit={handleSaveEditedStory} className="p-6 rounded-2xl border border-amber-500/20 bg-gradient-to-b from-slate-900/90 to-slate-950/90 space-y-5 shadow-2xl">
+                  <div className="flex items-center justify-between border-b border-white/10 pb-3">
+                    <span className="text-xs font-bold text-amber-400 uppercase tracking-wider flex items-center gap-1.5">
+                      <span>✏️</span> Review &amp; Personalize Story Keepsake
+                    </span>
+                    {storySaveSuccess && (
+                      <span className="text-xs text-emerald-400 font-semibold">
+                        ✓ Story saved successfully!
+                      </span>
+                    )}
+                  </div>
+
+                  <div>
+                    <label htmlFor="story-title-input" className="block text-xs font-semibold text-slate-300 mb-1">
+                      Story Title
+                    </label>
+                    <input
+                      id="story-title-input"
+                      type="text"
+                      required
+                      value={storyTitleEdit}
+                      onChange={(e) => setStoryTitleEdit(e.target.value)}
+                      className="w-full px-3 py-2 rounded-lg bg-slate-950 border border-white/10 text-white text-sm font-semibold focus:outline-none focus:border-amber-500"
+                    />
+                  </div>
+
+                  <div>
+                    <label htmlFor="story-dedication-input" className="block text-xs font-semibold text-slate-300 mb-1">
+                      Dedication
+                    </label>
+                    <textarea
+                      id="story-dedication-input"
+                      rows={2}
+                      required
+                      value={storyDedicationEdit}
+                      onChange={(e) => setStoryDedicationEdit(e.target.value)}
+                      className="w-full px-3 py-2 rounded-lg bg-slate-950 border border-white/10 text-white text-xs italic focus:outline-none focus:border-amber-500"
+                    />
+                  </div>
+
+                  <div>
+                    <label htmlFor="story-body-input" className="block text-xs font-semibold text-slate-300 mb-1">
+                      Story Body (350–550 words suggested)
+                    </label>
+                    <textarea
+                      id="story-body-input"
+                      rows={12}
+                      required
+                      value={storyBodyEdit}
+                      onChange={(e) => setStoryBodyEdit(e.target.value)}
+                      className="w-full px-3 py-2 rounded-lg bg-slate-950 border border-white/10 text-white text-xs leading-relaxed focus:outline-none focus:border-amber-500"
+                    />
+                    <div className="text-[10px] text-slate-400 mt-1 flex justify-between">
+                      <span>Word count: {storyBodyEdit.trim().split(/\s+/).filter(Boolean).length} words</span>
+                      <span>Rendered directly into in-memory PDF keepsake</span>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label htmlFor="story-closing-input" className="block text-xs font-semibold text-slate-300 mb-1">
+                      Closing Blessing &amp; Message
+                    </label>
+                    <textarea
+                      id="story-closing-input"
+                      rows={2}
+                      required
+                      value={storyClosingEdit}
+                      onChange={(e) => setStoryClosingEdit(e.target.value)}
+                      className="w-full px-3 py-2 rounded-lg bg-slate-950 border border-white/10 text-white text-xs font-medium focus:outline-none focus:border-amber-500"
+                    />
+                  </div>
+
+                  <div className="flex justify-end pt-2">
+                    <button
+                      id="btn-save-story-changes"
+                      type="submit"
+                      disabled={storySaving}
+                      className="px-6 py-2.5 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-200 text-xs font-bold transition-all disabled:opacity-50"
+                    >
+                      {storySaving ? "Saving Story..." : "💾 Save Story Edits"}
+                    </button>
+                  </div>
+                </form>
+              </div>
+            )}
           </div>
         )}
       </section>
     </div>
   );
 }
+

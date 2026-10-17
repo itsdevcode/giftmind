@@ -277,3 +277,141 @@ export async function getLatestRecommendations(
     }
   );
 }
+
+// --- Memory Interview Interfaces & API ---
+
+export interface MemoryAnswer {
+  id: string;
+  gift_project_id: string;
+  question_key: string;
+  question_prompt: string;
+  answer: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface MemoryAnswersListResponse {
+  gift_project_id: string;
+  answers: MemoryAnswer[];
+  has_sufficient_input: boolean;
+  guidance_message: string;
+}
+
+export async function getMemories(
+  projectId: string,
+  token: string
+): Promise<MemoryAnswersListResponse> {
+  return fetchApi<MemoryAnswersListResponse>(
+    `/api/v1/gift-projects/${projectId}/memories`,
+    {
+      method: "GET",
+      token,
+    }
+  );
+}
+
+export async function updateMemories(
+  projectId: string,
+  token: string,
+  csrfToken: string,
+  answers: { question_key: string; answer: string }[]
+): Promise<MemoryAnswersListResponse> {
+  return fetchApi<MemoryAnswersListResponse>(
+    `/api/v1/gift-projects/${projectId}/memories`,
+    {
+      method: "PUT",
+      token,
+      csrfToken,
+      body: JSON.stringify({ answers }),
+    }
+  );
+}
+
+// --- Story Keepsake Interfaces & API ---
+
+export interface StoryKeepsake {
+  id: string;
+  gift_project_id: string;
+  user_id: string;
+  title: string;
+  dedication: string;
+  story_body: string;
+  closing_message: string;
+  model_name: string;
+  prompt_version: string;
+  status: "pending" | "succeeded" | "failed";
+  error_message?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export async function generateStory(
+  projectId: string,
+  token: string,
+  csrfToken: string
+): Promise<StoryKeepsake> {
+  return fetchApi<StoryKeepsake>(
+    `/api/v1/gift-projects/${projectId}/story/generate`,
+    {
+      method: "POST",
+      token,
+      csrfToken,
+    }
+  );
+}
+
+export async function getLatestStory(
+  projectId: string,
+  token: string
+): Promise<StoryKeepsake> {
+  return fetchApi<StoryKeepsake>(
+    `/api/v1/gift-projects/${projectId}/story`,
+    {
+      method: "GET",
+      token,
+    }
+  );
+}
+
+export async function updateStory(
+  projectId: string,
+  token: string,
+  csrfToken: string,
+  payload: {
+    title: string;
+    dedication: string;
+    story_body: string;
+    closing_message: string;
+  }
+): Promise<StoryKeepsake> {
+  return fetchApi<StoryKeepsake>(
+    `/api/v1/gift-projects/${projectId}/story`,
+    {
+      method: "PATCH",
+      token,
+      csrfToken,
+      body: JSON.stringify(payload),
+    }
+  );
+}
+
+export async function downloadStoryPdf(
+  projectId: string,
+  token: string
+): Promise<Blob> {
+  const url = `${API_BASE_URL}/api/v1/gift-projects/${projectId}/story/pdf`;
+  const res = await fetch(url, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+
+  if (!res.ok) {
+    const errorText = await res.text().catch(() => "");
+    throw new Error(errorText || `Failed to download PDF (${res.status})`);
+  }
+
+  return res.blob();
+}
+

@@ -1,6 +1,7 @@
 from decimal import Decimal
 
 from app.schemas.recommendation import RawGiftIdea, RawGiftRecommendationOutput
+from app.schemas.story import RawStoryOutput, StoryPromptInput
 from app.services.ai.base import AIProvider
 from app.services.ai.prompts import RecommendationPromptInput
 
@@ -69,4 +70,59 @@ class MockAIProvider(AIProvider):
                     presentation_idea="Pack inside a reusable wooden keepsake crate tied with raw twine ribbon.",
                 ),
             ]
+        )
+
+    async def generate_story_keepsake(
+        self,
+        prompt_input: StoryPromptInput,
+    ) -> RawStoryOutput:
+        name = prompt_input.recipient_name
+        rel = prompt_input.relationship
+        occ = prompt_input.occasion
+
+        # Extract memories for story weaving
+        first_met = prompt_input.memories.get(
+            "how_we_met", "the day our paths first crossed in quiet serendipity"
+        )
+        favorite = prompt_input.memories.get(
+            "favorite_memory", "the afternoon we lost track of time talking about our biggest hopes"
+        )
+        special = prompt_input.memories.get(
+            "what_makes_them_special", "a genuine warmth and kindness that lights up every room"
+        )
+        milestone = prompt_input.memories.get(
+            "shared_milestone", "the challenge we weathered side by side without letting go of optimism"
+        )
+        feeling = prompt_input.memories.get(
+            "gift_feeling", "cherished, deeply appreciated, and reminded that our bond is enduring"
+        )
+
+        title = f"The Golden Thread of Moments: A Tribute to {name}"
+        dedication = f"Dedicated to {name}, my cherished {rel}, on this special {occ}."
+
+        story_body = (
+            f"Some connections in this life take root slowly, like perennials waiting for gentle spring rain, "
+            f"while others ignite instantly with a luminous spark. Looking back, {first_met}. From that singular "
+            f"beginning, a quiet understanding began to take shape between us, growing richer with each passing season.\n\n"
+            f"Life has a way of sweeping us through busy days, but certain memories remain untarnished by the passage "
+            f"of time. Among the fondest of them all is {favorite}. In that memory, everything that makes you who you "
+            f"are comes into vivid focus: {special}. It is that rare authenticity, that effortless grace you bring into "
+            f"the lives of everyone around you, that makes you so deeply special to me.\n\n"
+            f"True companionship is tested not when the waters are calm, but when waves test our footing. Together, we "
+            f"walked through {milestone}. Standing beside you through that chapter revealed the quiet strength of your "
+            f"character and cemented a foundation of trust that cannot be shaken.\n\n"
+            f"As we celebrate this {occ}, I find myself reflecting on how grateful I am to share this journey with you. "
+            f"May these words serve as an enduring reminder of how much you are cherished, honoring the memories we have "
+            f"built together and looking forward with joy to every chapter still unwritten."
+        )
+
+        closing_message = (
+            f"Happy {occ}, {name}. May you always feel {feeling}. With all my heart and gratitude."
+        )
+
+        return RawStoryOutput(
+            title=title,
+            dedication=dedication,
+            story_body=story_body,
+            closing_message=closing_message,
         )

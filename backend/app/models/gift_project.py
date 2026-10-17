@@ -24,6 +24,7 @@ from app.db.session import Base
 if TYPE_CHECKING:
     from app.models.recipient import Recipient
     from app.models.recommendation import GiftRecommendation, GiftRecommendationGeneration
+    from app.models.story import MemoryAnswer, StoryKeepsake
     from app.models.user import User
 
 
@@ -103,6 +104,18 @@ class GiftProject(Base):
     )
     recommendations: Mapped[list["GiftRecommendation"]] = relationship(
         "GiftRecommendation",
+        back_populates="gift_project",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+    memory_answers: Mapped[list["MemoryAnswer"]] = relationship(
+        "MemoryAnswer",
+        back_populates="gift_project",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+    story_keepsakes: Mapped[list["StoryKeepsake"]] = relationship(
+        "StoryKeepsake",
         back_populates="gift_project",
         cascade="all, delete-orphan",
         passive_deletes=True,
