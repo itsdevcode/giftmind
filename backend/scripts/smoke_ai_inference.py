@@ -1,70 +1,77 @@
 #!/usr/bin/env python3
-"""Smoke test script for GiftMind AI Inference Engine with Ollama (Gemma 2 2B).
+"""Smoke test script for GiftMind AI Inference Engine with Hosted Gemma (Google Gemini API).
 
-This script verifies end-to-end communication with the local Ollama instance:
-1. Pings Ollama base URL to verify connectivity.
-2. Checks whether the target model (default: gemma2:2b) is loaded/available.
-3. Sends a real test prompt through OllamaAIProvider.
-4. Validates that exactly 3 distinct, well-structured recommendations are returned.
-5. Measures latency, tokens, and output format correctness.
+This script verifies end-to-end communication with the Google-hosted Gemma 4 26B model:
+1. Reads GOOGLE_API_KEY securely from environment (or --api-key argument). Never logs secrets.
+2. Checks whether the target model (default: gemma-4-26b-a4b-it) is accessible.
+3. Sends a real test prompt through GoogleGemmaAIProvider.
+4. Validates that exactly 3 distinct, well-structured recommendations are returned within budget constraints.
+5. Measures latency, tokens (where available), and output format correctness.
 
 Usage:
-    uv run python scripts/smoke_ai_inference.py [--url http://localhost:11434] [--model gemma2:2b]
+    export GOOGLE_API_KEY="your-api-key"
+    uv run python scripts/smoke_ai_inference.py [--model gemma-4-26b-a4b-it]
 """
 
 import argparse
 import asyncio
+import os
 import sys
 import time
 from decimal import Decimal
 
 from app.schemas.recommendation import RawGiftRecommendationOutput
 from app.services.ai.exceptions import (
+    AIAuthenticationError,
+    AIInferenceTimeoutError,
     AIModelNotFoundError,
     AIProviderError,
+    AIRateLimitError,
     AIResponseValidationError,
 )
-from app.services.ai.ollama import OllamaAIProvider
+from app.services.ai.google_gemma import GoogleGemmaAIProvider
 from app.services.ai.prompts import RecommendationPromptInput
 
 
-async def run_smoke_test(ollama_url: str, model_name: str, timeout: float) -> int:
+async def run_smoke_test(api_key: str, model_name: str, timeout: float) -> int:
     print("=" * 60)
-    print("  GiftMind AI Inference Engine Smoke Test")
+    print("  GiftMind AI Inference Engine Smoke Test (Hosted Gemma 4)")
     print("=" * 60)
-    print(f"Target URL:   {ollama_url}")
-    print(f"Target Model: {model_name}")
-    print(f"Timeout:      {timeout}s")
+    print("Target Provider: Google Gemini API (hosted open-weight Gemma)")
+    print(f"Target Model:    {model_name}")
+    print(
+        f"API Key:         {'[SET - ' + str(len(api_key)) + ' chars]' if api_key else '[MISSING]'}"
+    )
+    print(f"Timeout:         {timeout}s")
     print("-" * 60)
 
-    provider = OllamaAIProvider(
-        base_url=ollama_url,
+    if not api_key:
+        print("❌ Smoke test FAILED: GOOGLE_API_KEY is not set.")
+        print("Please obtain a free API key from Google AI Studio (https://aistudio.google.com/)")
+        print("and run: export GOOGLE_API_KEY='your-api-key'")
+        return 1
+
+    provider = GoogleGemmaAIProvider(
+        api_key=api_key,
         model=model_name,
         timeout_seconds=timeout,
     )
 
-    # Step 1 & 2: Connectivity and model check
-    print("\n[1/3] Checking Ollama host connectivity and model status...")
+    # Step 1: Connectivity and model accessibility check
+    print("\n[1/2] Verifying Google AI connection and model access...")
     status = await provider.verify_connection()
     if not status.get("available"):
-        print(f"❌ Ollama server unreachable: {status.get('error')}")
+        print(f"❌ Verification failed: {status.get('error')}")
         print("\nTroubleshooting tips:")
-        print("  - Ensure Ollama is running: `ollama serve`")
-        print("  - Check that the URL is correct (default: http://localhost:11434)")
+        print("  - Check that your GOOGLE_API_KEY is active in Google AI Studio")
+        print(f"  - Confirm model '{model_name}' is accessible to your API project")
         return 1
-    print("✅ Ollama server is reachable and active.")
+    print(
+        f"✅ Connection verified. Model: {status.get('model')} ({status.get('model_display_name', '')})"
+    )
 
-    print(f"\n[2/3] Checking if model '{model_name}' is installed...")
-    installed_models = status.get("installed_models", [])
-    print(f"Found installed models: {installed_models or '(none)'}")
-    if not status.get("model_installed"):
-        print(f"❌ Model '{model_name}' is not installed on Ollama server.")
-        print(f"To download it, run: `ollama pull {model_name}`")
-        print("\nSmoke test BLOCKED: Target model unavailable. Aborting inference.")
-        return 1
-
-    # Step 3: Inference check with sample recipient
-    print(f"\n[3/3] Sending sample prompt to '{model_name}' (JSON format enforced)...")
+    # Step 2: Live inference with realistic sample recipient
+    print(f"\n[2/2] Generating recommendations using '{model_name}'...")
     sample_input = RecommendationPromptInput(
         recipient_name="Maya",
         relationship="Close Friend",
@@ -83,27 +90,42 @@ async def run_smoke_test(ollama_url: str, model_name: str, timeout: float) -> in
             sample_input
         )
         elapsed = time.perf_counter() - start_time
+    except AIAuthenticationError as exc:
+        print(f"❌ Authentication failure: {exc.message}")
+        return 1
+    except AIRateLimitError as exc:
+        print(f"❌ Rate limit exceeded: {exc.message}")
+        if exc.retry_after:
+            print(f"   Retry after {exc.retry_after}s")
+        return 1
     except AIModelNotFoundError as exc:
-        print(f"❌ Model '{model_name}' is not installed: {exc}")
-        print(f"Fix: Run `ollama pull {model_name}` and rerun this script.")
+        print(f"❌ Model '{model_name}' not found: {exc.message}")
+        return 1
+    except AIInferenceTimeoutError as exc:
+        print(f"❌ Inference timed out: {exc.message}")
         return 1
     except AIResponseValidationError as exc:
-        print(f"❌ Inference returned invalid format: {exc}")
+        print(f"❌ Output validation error: {exc.message}")
         return 1
     except AIProviderError as exc:
-        print(f"❌ Inference error: {exc}")
+        print(f"❌ Provider error: {exc.message}")
         return 1
     except Exception as exc:
-        print(f"❌ Unexpected failure: {exc}")
+        print(f"❌ Unexpected failure: {type(exc).__name__}: {exc}")
         return 1
 
-    # Validate model response against recipient budget constraints and interests
+    # Step 3: Validate output budget constraints and format
     budget_violations = [
-        idea for idea in result.recommendations
-        if idea.estimated_budget < sample_input.budget_min or idea.estimated_budget > sample_input.budget_max
+        idea
+        for idea in result.recommendations
+        if idea.estimated_budget < sample_input.budget_min
+        or idea.estimated_budget > sample_input.budget_max
     ]
     if budget_violations:
-        print(f"❌ Budget constraint check failed: {len(budget_violations)} ideas violate bounds [${sample_input.budget_min}, ${sample_input.budget_max}]")
+        print(
+            f"❌ Budget constraint check failed: {len(budget_violations)} ideas violate bounds "
+            f"[${sample_input.budget_min}, ${sample_input.budget_max}]"
+        )
         return 1
 
     print(f"✅ Received response in {elapsed:.2f} seconds!")
@@ -119,19 +141,32 @@ async def run_smoke_test(ollama_url: str, model_name: str, timeout: float) -> in
         print()
 
     print("=" * 60)
-    print("🎉 Smoke test PASSED: All requirements satisfied!")
+    print("🎉 Smoke test PASSED: Hosted Gemma 4 inference working properly!")
     print("=" * 60)
     return 0
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="GiftMind AI inference smoke test")
-    parser.add_argument("--url", default="http://localhost:11434", help="Ollama base URL")
-    parser.add_argument("--model", default="gemma2:2b", help="Model name (default: gemma2:2b)")
-    parser.add_argument("--timeout", type=float, default=60.0, help="Inference timeout in seconds")
+    parser = argparse.ArgumentParser(description="GiftMind hosted Gemma 4 AI smoke test")
+    parser.add_argument(
+        "--api-key",
+        default=os.environ.get("GOOGLE_API_KEY", ""),
+        help="Google AI Studio API key (default: read from GOOGLE_API_KEY env var)",
+    )
+    parser.add_argument(
+        "--model",
+        default=os.environ.get("GEMMA_MODEL", "gemma-4-26b-a4b-it"),
+        help="Target model ID (default: gemma-4-26b-a4b-it)",
+    )
+    parser.add_argument(
+        "--timeout",
+        type=float,
+        default=90.0,
+        help="Inference timeout in seconds (default: 90.0)",
+    )
     args = parser.parse_args()
 
-    exit_code = asyncio.run(run_smoke_test(args.url, args.model, args.timeout))
+    exit_code = asyncio.run(run_smoke_test(args.api_key, args.model, args.timeout))
     sys.exit(exit_code)
 
 

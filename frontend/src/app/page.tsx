@@ -311,7 +311,7 @@ export default function HomePage() {
         <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full border border-purple-500/30 bg-purple-500/10 text-purple-300 text-xs font-semibold uppercase tracking-wider mb-6">
           <span>🚀 Phase 3 Active: AI Gift Recommendations</span>
           <span className="text-slate-400">•</span>
-          <span className="text-slate-300">Gemma 2 Inference Engine</span>
+          <span className="text-slate-300">Hosted Gemma 4 26B Engine</span>
         </div>
 
         <h1 className="text-4xl sm:text-6xl font-extrabold tracking-tight text-white mb-4">
@@ -647,29 +647,29 @@ export default function HomePage() {
               <div className="p-6 rounded-2xl border border-purple-500/30 bg-purple-950/20 flex flex-col justify-between space-y-6">
                 <div>
                   <div className="inline-flex items-center gap-1.5 text-xs font-semibold text-purple-400 mb-2 uppercase tracking-wider">
-                    <span>✨</span> Gemma 2 AI Engine
+                    <span>✨</span> Gemma 4 AI Engine
                   </div>
                   <h3 className="text-lg font-bold text-white mb-2">
                     Generate Recommendations
                   </h3>
                   <p className="text-xs text-slate-300 leading-relaxed">
                     Our prompt synthesis engine takes recipient interests, memories, and budget constraints
-                    and feeds them into local Gemma 2 with strict JSON grammar and budget validation.
+                    and feeds them into hosted Gemma 4 26B with strict JSON grammar and budget validation.
                   </p>
                 </div>
 
                 <div className="p-4 rounded-xl bg-slate-950/70 border border-white/5 space-y-2 text-xs">
                   <div className="flex justify-between text-slate-400">
                     <span>Provider:</span>
-                    <span className="font-mono text-purple-300">Local Ollama / Gemma 2 2B</span>
+                    <span className="font-mono text-purple-300">Google Gemini API / Gemma 4 26B</span>
                   </div>
                   <div className="flex justify-between text-slate-400">
                     <span>Output Schema:</span>
                     <span className="font-mono text-slate-300">3 Distinct Ideas + Budget Validation</span>
                   </div>
                   <div className="flex justify-between text-slate-400">
-                    <span>Privacy:</span>
-                    <span className="text-emerald-400">100% On-Premise Local</span>
+                    <span>Model Architecture:</span>
+                    <span className="text-emerald-400">Open-Weight Gemma 4</span>
                   </div>
                 </div>
 

@@ -15,9 +15,11 @@ from app.models.recommendation import (
     RecommendationGenerationStatus,
 )
 from app.services.ai.exceptions import (
+    AIAuthenticationError,
     AIInferenceTimeoutError,
     AIModelNotFoundError,
     AIProviderUnavailableError,
+    AIRateLimitError,
     AIResponseValidationError,
 )
 from app.services.ai.mock import MockAIProvider
@@ -234,6 +236,47 @@ async def test_ai_model_not_found_handling(client: AsyncClient) -> None:
         )
         assert res.status_code == 503
         assert "not found" in res.json()["detail"].lower()
+
+
+@pytest.mark.asyncio
+async def test_ai_rate_limit_handling(client: AsyncClient) -> None:
+    """When the AI provider rate limit is exceeded, returns 429 Too Many Requests with Retry-After header."""
+    token, _, proj_id = await _create_user_and_project(
+        client, "Rate Limited User", "ratelimit@example.com"
+    )
+    headers = {"Authorization": f"Bearer {token}"}
+
+    with patch(
+        "app.services.ai.mock.MockAIProvider.generate_gift_recommendations",
+        new=AsyncMock(side_effect=AIRateLimitError("Quota exceeded", retry_after=5.0)),
+    ):
+        res = await client.post(
+            f"/api/v1/gift-projects/{proj_id}/recommendations/generate",
+            headers=headers,
+        )
+        assert res.status_code == 429
+        assert "busy" in res.json()["detail"].lower()
+        assert res.headers.get("retry-after") == "5"
+
+
+@pytest.mark.asyncio
+async def test_ai_authentication_error_handling(client: AsyncClient) -> None:
+    """When the AI provider authentication fails, returns 503 Service Unavailable."""
+    token, _, proj_id = await _create_user_and_project(
+        client, "Auth Error User", "autherror@example.com"
+    )
+    headers = {"Authorization": f"Bearer {token}"}
+
+    with patch(
+        "app.services.ai.mock.MockAIProvider.generate_gift_recommendations",
+        new=AsyncMock(side_effect=AIAuthenticationError("Invalid API key")),
+    ):
+        res = await client.post(
+            f"/api/v1/gift-projects/{proj_id}/recommendations/generate",
+            headers=headers,
+        )
+        assert res.status_code == 503
+        assert "misconfigured" in res.json()["detail"].lower()
 
 
 @pytest.mark.asyncio

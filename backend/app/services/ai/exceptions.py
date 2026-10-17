@@ -46,3 +46,25 @@ class AIResponseValidationError(AIProviderError):
         message: str = "The AI model produced an output format that could not be validated. Please try again.",
     ) -> None:
         super().__init__(message, is_retryable=True)
+
+
+class AIAuthenticationError(AIProviderError):
+    """Raised when the AI provider authentication fails (e.g. invalid or missing API key)."""
+
+    def __init__(
+        self,
+        message: str = "AI service authentication failed. Please verify your API key.",
+    ) -> None:
+        super().__init__(message, is_retryable=False)
+
+
+class AIRateLimitError(AIProviderError):
+    """Raised when the AI provider rate limit / quota has been exceeded (HTTP 429)."""
+
+    def __init__(
+        self,
+        message: str = "AI service rate limit exceeded. Please try again shortly.",
+        retry_after: float | None = None,
+    ) -> None:
+        super().__init__(message, is_retryable=True)
+        self.retry_after = retry_after

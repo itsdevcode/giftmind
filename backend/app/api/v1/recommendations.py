@@ -24,10 +24,12 @@ from app.schemas.recommendation import (
     GiftRecommendationRead,
 )
 from app.services.ai.exceptions import (
+    AIAuthenticationError,
     AIInferenceTimeoutError,
     AIModelNotFoundError,
     AIProviderError,
     AIProviderUnavailableError,
+    AIRateLimitError,
     AIResponseValidationError,
 )
 from app.services.ai.factory import get_ai_provider
@@ -160,6 +162,30 @@ async def generate_recommendations(
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=generation.error_message,
+        ) from None
+    except AIAuthenticationError as err:
+        logger.error("AI authentication failure: %s", err.message)
+        generation.status = RecommendationGenerationStatus.failed
+        generation.error_message = (
+            "The AI inference service authentication failed. Please verify API key configuration."
+        )
+        await db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="The AI inference service is currently misconfigured. Please contact support.",
+        ) from None
+    except AIRateLimitError as err:
+        logger.warning("AI rate limit hit: %s", err.message)
+        generation.status = RecommendationGenerationStatus.failed
+        generation.error_message = "The AI service rate limit was exceeded."
+        await db.commit()
+        headers = {}
+        if err.retry_after is not None:
+            headers["Retry-After"] = str(int(err.retry_after))
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="The AI recommendation service is currently busy. Please wait a moment and try again.",
+            headers=headers if headers else None,
         ) from None
     except AIInferenceTimeoutError as err:
         logger.warning("AI inference timeout: %s", err.message)

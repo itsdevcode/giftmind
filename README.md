@@ -32,11 +32,13 @@ To ensure engineering transparency and integrity, features are strictly categori
   - Full CRUD operations with foreign key integrity to user and recipient.
   - Recipient ownership verification and budget constraint validation (`budget_min >= 0`, `budget_max >= budget_min`).
   - Endpoints: `POST /api/v1/gift-projects`, `GET /api/v1/gift-projects`, `GET /api/v1/gift-projects/{id}`, `PUT /api/v1/gift-projects/{id}`, `DELETE /api/v1/gift-projects/{id}`.
-- [x] **Phase 3: AI Recommendation Engine (Ollama / Gemma 2 2B)**:
+- [x] **Phase 3: AI Recommendation Engine (Hosted Gemma 4 26B via Google Gemini API)**:
   - Abstract AI provider interface (`AIProvider`) decoupling business logic from inference backend.
+  - Server-side integration with open-weight **Gemma 4 26B A4B** (`gemma-4-26b-a4b-it`) hosted on Google Gemini API infrastructure via official `google-genai` SDK.
   - Hardened prompt synthesis with `<untrusted_user_notes>` boundary encapsulation against prompt injection.
-  - Strict JSON schema enforcement delivering exactly 3 distinct, budget-aligned recommendations with personalized rationale and presentation ideas.
-  - Atomic persistence in PostgreSQL (`gift_recommendation_generations` and `gift_recommendations`) with transaction rollback on model failure.
+  - Strict JSON schema enforcement and Pydantic validation delivering exactly 3 distinct, budget-aligned recommendations with personalized rationale and presentation ideas.
+  - Atomic generation slot claim backed by PostgreSQL partial unique index (`uq_gift_recommendation_generations_project_pending`), preventing race conditions and duplicate generation charges.
+  - Atomic persistence in PostgreSQL (`gift_recommendation_generations` and `gift_recommendations`) with transaction rollback and error recording on model failure.
   - Endpoints: `POST /api/v1/gift-projects/{id}/recommendations/generate`, `GET /api/v1/gift-projects/{id}/recommendations`.
   - Smoke testing CLI: `backend/scripts/smoke_ai_inference.py`.
 - [x] **Next.js 14 App Router Frontend**:
@@ -347,27 +349,35 @@ Endpoints require `Authorization: Bearer <access_token>`.
 
 ---
 
-### 3. Local AI Inference Setup (Ollama + Gemma 2 2B)
+### 3. AI Inference Setup (Hosted Gemma 4 26B A4B)
 
-GiftMind uses open-weight **Gemma 2 2B** running locally via Ollama to protect user privacy and avoid costly proprietary APIs.
+GiftMind uses open-weight **Gemma 4 26B A4B** (`gemma-4-26b-a4b-it`) hosted via Google Gemini API infrastructure. Gemma remains an open-weight model even when hosted on Google's scalable inference infrastructure. This provides fast, reliable inference without requiring high-end local GPUs or running local daemon processes like Ollama.
 
-1. Install [Ollama](https://ollama.com):
+#### API Quotas & Limits (Free Tier)
+- **Rate Limit**: 30 Requests Per Minute (RPM)
+- **Token Quota**: 16,000 Tokens Per Minute (TPM)
+- **Daily Quota**: 14,400 Requests Per Day (RPD)
+
+#### Setup Instructions:
+1. Obtain a free API key from [Google AI Studio](https://aistudio.google.com/).
+2. In `backend/.env`, set your key and configure inference:
    ```bash
-   curl -fsSL https://ollama.com/install.sh | sh
+   AI_PROVIDER=google
+   GOOGLE_API_KEY=your_google_api_key_here
+   GEMMA_MODEL=gemma-4-26b-a4b-it
+   AI_REQUEST_TIMEOUT_SECONDS=90.0
    ```
-2. Pull the optimized Gemma 2 2B model (~1.6 GB):
-   ```bash
-   ollama pull gemma2:2b
-   ```
-3. Start the Ollama server:
-   ```bash
-   ollama serve
-   ```
-4. Verify inference connectivity using the smoke test script:
+3. Run the inference smoke test to verify live connectivity and structured output validation:
    ```bash
    cd backend
-   uv run python scripts/smoke_ai_inference.py --model gemma2:2b
+   uv run python scripts/smoke_ai_inference.py
    ```
+   *(Note: The smoke test securely inspects `GOOGLE_API_KEY` from your environment without logging secrets.)*
+
+#### Data Privacy & Security
+- User-provided recipient notes and personal memories are sanitized and fenced within `<untrusted_user_notes>` blocks to prevent prompt injection.
+- API keys are backend-only and never exposed to the frontend browser or placed in `NEXT_PUBLIC_*` variables.
+- Raw personal memories and API secrets are never logged in application logs.
 
 ---
 

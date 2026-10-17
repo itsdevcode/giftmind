@@ -62,10 +62,13 @@ class Settings(BaseSettings):
     CSRF_HEADER_NAME: str = "x-csrf-token"
 
     # AI Provider & Inference Configuration
-    AI_PROVIDER: Literal["ollama", "mock"] = "ollama"
-    OLLAMA_BASE_URL: str = "http://localhost:11434"
-    OLLAMA_MODEL: str = "gemma2:2b"
-    AI_REQUEST_TIMEOUT_SECONDS: float = 45.0
+    AI_PROVIDER: Literal["google", "mock"] = "google"
+    GOOGLE_API_KEY: str = Field(
+        default="",
+        description="Server-side API key for Google-hosted Gemma inference via google-genai",
+    )
+    GEMMA_MODEL: str = "gemma-4-26b-a4b-it"
+    AI_REQUEST_TIMEOUT_SECONDS: float = 90.0
 
     @model_validator(mode="after")
     def validate_production_security(self) -> "Settings":
@@ -101,8 +104,15 @@ class Settings(BaseSettings):
 
             if self.AI_PROVIDER == "mock":
                 raise ValueError(
-                    "AI_PROVIDER='mock' is not allowed in production. Configure a real inference provider (e.g. 'ollama')."
+                    "AI_PROVIDER='mock' is not allowed in production. Configure a real inference provider (e.g. 'google')."
                 )
+
+            if self.AI_PROVIDER == "google":
+                api_key = (self.GOOGLE_API_KEY or "").strip()
+                if not api_key:
+                    raise ValueError(
+                        "GOOGLE_API_KEY must be configured in production when AI_PROVIDER='google'."
+                    )
 
         return self
 
