@@ -21,6 +21,7 @@ import json
 from decimal import Decimal
 from unittest.mock import AsyncMock, MagicMock
 
+import httpx
 import pytest
 from google.genai import errors
 
@@ -316,3 +317,72 @@ async def test_provider_factory_selection() -> None:
     p_mock = get_ai_provider(settings_mock)
     assert isinstance(p_mock, MockAIProvider)
     assert p_mock.provider_name == "mock"
+
+
+@pytest.mark.asyncio
+async def test_google_gemma_transient_500_followed_by_successful_retry(
+    sample_prompt_input: RecommendationPromptInput,
+    valid_recommendations_json: str,
+) -> None:
+    """When attempt 1 returns Google 500 internal error, attempt 2 succeeds and returns validated output."""
+    mock_client = MagicMock()
+    mock_generate = AsyncMock()
+
+    mock_resp = MagicMock()
+    mock_resp.text = valid_recommendations_json
+
+    err_500 = errors.APIError(
+        500, {"error": {"message": "Internal error encountered.", "code": 500}}
+    )
+    mock_generate.side_effect = [err_500, mock_resp]
+    mock_client.aio.models.generate_content = mock_generate
+
+    provider = GoogleGemmaAIProvider(api_key="test-key", client=mock_client)
+    output = await provider.generate_gift_recommendations(sample_prompt_input)
+
+    assert len(output.recommendations) == 3
+    assert mock_generate.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_google_gemma_httpx_transport_error_followed_by_success(
+    sample_prompt_input: RecommendationPromptInput,
+    valid_recommendations_json: str,
+) -> None:
+    """When attempt 1 encounters a socket reset / transport error, it retries and succeeds on attempt 2."""
+    mock_client = MagicMock()
+    mock_generate = AsyncMock()
+
+    mock_resp = MagicMock()
+    mock_resp.text = valid_recommendations_json
+
+    transport_err = httpx.ConnectError("Connection reset by peer")
+    mock_generate.side_effect = [transport_err, mock_resp]
+    mock_client.aio.models.generate_content = mock_generate
+
+    provider = GoogleGemmaAIProvider(api_key="test-key", client=mock_client)
+    output = await provider.generate_gift_recommendations(sample_prompt_input)
+
+    assert len(output.recommendations) == 3
+    assert mock_generate.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_google_gemma_exhausted_retries_server_error(
+    sample_prompt_input: RecommendationPromptInput,
+) -> None:
+    """When Google 500 persists across all attempts (initial + 3 retries), raises AIProviderUnavailableError."""
+    mock_client = MagicMock()
+    mock_generate = AsyncMock()
+
+    err_500 = errors.APIError(500, {"error": {"message": "Persistent server failure", "code": 500}})
+    mock_generate.side_effect = err_500
+    mock_client.aio.models.generate_content = mock_generate
+
+    provider = GoogleGemmaAIProvider(api_key="test-key", client=mock_client)
+    with pytest.raises(AIProviderUnavailableError) as exc_info:
+        await provider.generate_gift_recommendations(sample_prompt_input)
+
+    assert "temporarily unavailable" in str(exc_info.value).lower()
+    # 1 initial + 3 retries = 4 calls total
+    assert mock_generate.call_count == 4

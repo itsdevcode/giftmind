@@ -455,3 +455,122 @@ async def test_budget_boundary_enforcement(client: AsyncClient) -> None:
         )
         assert res.status_code == 502
         assert "budget constraints" in res.json()["detail"].lower()
+
+
+@pytest.mark.asyncio
+async def test_background_generation_and_polling_success(client: AsyncClient) -> None:
+    """Asynchronous background generation returns HTTP 201 with status pending immediately.
+    Frontend polls status until background worker finishes and populates 3 recommendations.
+    """
+    token, _, proj_id = await _create_user_and_project(
+        client, "Async Giver", "async_giver@example.com"
+    )
+    headers = {"Authorization": f"Bearer {token}"}
+
+    # 1. Trigger asynchronous generation
+    gen_res = await client.post(
+        f"/api/v1/gift-projects/{proj_id}/recommendations/generate?background=true",
+        headers=headers,
+    )
+    assert gen_res.status_code == 201
+    gen_data = gen_res.json()
+    assert gen_data["status"] == "pending"
+    assert gen_data["recommendations"] == []
+    generation_id = gen_data["id"]
+
+    # 2. Poll generation status until completed
+    completed = False
+    for _ in range(20):
+        status_res = await client.get(
+            f"/api/v1/gift-projects/{proj_id}/recommendations/{generation_id}",
+            headers=headers,
+        )
+        assert status_res.status_code == 200
+        poll_data = status_res.json()
+        if poll_data["status"] == "succeeded":
+            completed = True
+            assert len(poll_data["recommendations"]) == 3
+            break
+        await asyncio.sleep(0.1)
+
+    assert completed, "Background generation did not transition to succeeded within timeout"
+
+
+@pytest.mark.asyncio
+async def test_background_duplicate_generation_409(client: AsyncClient) -> None:
+    """Simultaneous duplicate generation requests while a background generation is pending return 409 Conflict."""
+    token, _, proj_id = await _create_user_and_project(
+        client, "Duplicate Giver", "dup_giver@example.com"
+    )
+    headers = {"Authorization": f"Bearer {token}"}
+
+    # Hold the mock provider to keep generation in pending state
+    release_event = asyncio.Event()
+
+    async def slow_generate(self, prompt_input):
+        await asyncio.wait_for(release_event.wait(), timeout=5.0)
+        from app.services.ai.mock import MockAIProvider as RealMock
+
+        return await RealMock.generate_gift_recommendations(self, prompt_input)
+
+    with patch.object(
+        MockAIProvider,
+        "generate_gift_recommendations",
+        new=slow_generate,
+    ):
+        # 1. Start first generation (background=true)
+        res1 = await client.post(
+            f"/api/v1/gift-projects/{proj_id}/recommendations/generate?background=true",
+            headers=headers,
+        )
+        assert res1.status_code == 201
+        assert res1.json()["status"] == "pending"
+
+        # 2. Duplicate generation attempt while first is still pending -> 409 Conflict
+        res2 = await client.post(
+            f"/api/v1/gift-projects/{proj_id}/recommendations/generate?background=true",
+            headers=headers,
+        )
+        assert res2.status_code == 409
+        assert "in progress" in res2.json()["detail"].lower()
+
+        # Release slow worker
+        release_event.set()
+
+
+@pytest.mark.asyncio
+async def test_stale_pending_generation_recovery_on_status_get(
+    client: AsyncClient, test_app
+) -> None:
+    """When a pending generation was abandoned > timeout old, polling GET marks it failed."""
+    token, _, proj_id = await _create_user_and_project(
+        client, "Stale Poller", "stale_poller@example.com"
+    )
+    headers = {"Authorization": f"Bearer {token}"}
+
+    # Insert an abandoned pending generation from 10 minutes ago
+    session_factory = test_app.state.session_factory
+    async with session_factory() as session:
+        stale_gen = GiftRecommendationGeneration(
+            gift_project_id=uuid.UUID(proj_id),
+            user_id=(await session.get(GiftProject, uuid.UUID(proj_id))).user_id,
+            provider="mock",
+            model="mock-gemma",
+            prompt_version="v1",
+            status=RecommendationGenerationStatus.pending,
+            created_at=datetime.now(UTC) - timedelta(minutes=10),
+            updated_at=datetime.now(UTC) - timedelta(minutes=10),
+        )
+        session.add(stale_gen)
+        await session.commit()
+        stale_id = stale_gen.id
+
+    # Polling GET should auto-mark it as failed
+    status_res = await client.get(
+        f"/api/v1/gift-projects/{proj_id}/recommendations/{stale_id}",
+        headers=headers,
+    )
+    assert status_res.status_code == 200
+    data = status_res.json()
+    assert data["status"] == "failed"
+    assert "timed out" in data["error_message"].lower()

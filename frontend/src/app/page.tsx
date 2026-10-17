@@ -24,6 +24,9 @@ import {
   createGiftProject,
   generateRecommendations,
   getLatestRecommendations,
+  getRecommendationGenerationStatus,
+  subscribeAuth,
+  setAuthSession,
   getMemories,
   updateMemories,
   generateStory,
@@ -91,6 +94,33 @@ export default function HomePage() {
   // Project identity guard ref to prevent race conditions across fast switches
   const activeProjectIdRef = useRef<string>("");
 
+  // Polling reference for asynchronous recommendation generations
+  const pollingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  const stopPollingRecommendations = useCallback(() => {
+    if (pollingTimeoutRef.current) {
+      clearTimeout(pollingTimeoutRef.current);
+      pollingTimeoutRef.current = null;
+    }
+  }, []);
+
+  // Clean up polling timer when component unmounts
+  useEffect(() => {
+    return () => {
+      stopPollingRecommendations();
+    };
+  }, [stopPollingRecommendations]);
+
+  // Subscribe to transparent token refresh from api.ts
+  useEffect(() => {
+    const unsubscribe = subscribeAuth((session) => {
+      if (session.token !== undefined) setToken(session.token);
+      if (session.csrfToken !== undefined) setCsrfToken(session.csrfToken);
+      if (session.user !== undefined) setCurrentUser(session.user);
+    });
+    return unsubscribe;
+  }, []);
+
   // Helper: extract CSRF cookie from document.cookie
   const getCsrfCookie = (): string | null => {
     if (typeof document === "undefined") return null;
@@ -106,6 +136,7 @@ export default function HomePage() {
     refreshAuth(existingCsrf)
       .then((data) => {
         if (isMounted) {
+          setAuthSession(data);
           setToken(data.access_token);
           setCsrfToken(data.csrf_token);
           setCurrentUser(data.user);
@@ -174,6 +205,7 @@ export default function HomePage() {
 
   // Reset project-scoped subresources immediately on project switch
   const resetProjectSubresources = useCallback(() => {
+    stopPollingRecommendations();
     setLatestGeneration(null);
     setStory(null);
     setMemories({
@@ -187,7 +219,8 @@ export default function HomePage() {
     setMemoryGuidance("");
     setGenerationError(null);
     setStoryError(null);
-  }, []);
+    setGenerating(false);
+  }, [stopPollingRecommendations]);
 
   const handleSelectProject = (projectId: string) => {
     if (projectId === selectedProjectId) return;
@@ -195,6 +228,73 @@ export default function HomePage() {
     activeProjectIdRef.current = projectId;
     resetProjectSubresources();
   };
+
+  // Start polling recommendation generation status at bounded interval (2.5s)
+  const startPollingRecommendations = useCallback(
+    (projectId: string, generationId?: string) => {
+      stopPollingRecommendations();
+      setGenerating(true);
+      setGenerationError(null);
+
+      let attempts = 0;
+      const maxAttempts = 60; // 60 attempts * 2.5s = 150s
+
+      const pollTick = async () => {
+        if (activeProjectIdRef.current !== projectId) {
+          stopPollingRecommendations();
+          return;
+        }
+
+        attempts++;
+        try {
+          const latest = generationId
+            ? await getRecommendationGenerationStatus(projectId, generationId, token || "")
+            : await getLatestRecommendations(projectId, token || "");
+
+          if (activeProjectIdRef.current !== projectId) return;
+
+          setLatestGeneration(latest);
+
+          if (latest.status === "succeeded") {
+            setGenerating(false);
+            stopPollingRecommendations();
+            return;
+          }
+
+          if (latest.status === "failed") {
+            setGenerating(false);
+            setGenerationError(latest.error_message || "Generation failed. Please try again.");
+            stopPollingRecommendations();
+            return;
+          }
+
+          // Still pending
+          if (attempts >= maxAttempts) {
+            setGenerating(false);
+            setGenerationError("Generation timed out. Please try again.");
+            stopPollingRecommendations();
+            return;
+          }
+
+          pollingTimeoutRef.current = setTimeout(pollTick, 2500);
+        } catch (err: unknown) {
+          if (activeProjectIdRef.current !== projectId) return;
+          if (attempts >= maxAttempts) {
+            setGenerating(false);
+            setGenerationError(
+              err instanceof Error ? err.message : "Failed to retrieve generation status."
+            );
+            stopPollingRecommendations();
+          } else {
+            pollingTimeoutRef.current = setTimeout(pollTick, 2500);
+          }
+        }
+      };
+
+      pollingTimeoutRef.current = setTimeout(pollTick, 2500);
+    },
+    [token, stopPollingRecommendations]
+  );
 
   // Load project subresources whenever selectedProjectId changes
   useEffect(() => {
@@ -212,11 +312,17 @@ export default function HomePage() {
       .then((data) => {
         if (activeProjectIdRef.current === currentProjectId) {
           setLatestGeneration(data);
+          if (data.status === "pending") {
+            startPollingRecommendations(currentProjectId, data.id);
+          } else {
+            setGenerating(false);
+          }
         }
       })
       .catch(() => {
         if (activeProjectIdRef.current === currentProjectId) {
           setLatestGeneration(null);
+          setGenerating(false);
         }
       });
 
@@ -254,7 +360,7 @@ export default function HomePage() {
           setStory(null);
         }
       });
-  }, [selectedProjectId, token, resetProjectSubresources]);
+  }, [selectedProjectId, token, resetProjectSubresources, startPollingRecommendations]);
 
   // Auth Submit Handler
   const handleAuthSubmit = async (
@@ -357,6 +463,7 @@ export default function HomePage() {
       if (!currentUser) setAuthModalOpen(true);
       return;
     }
+    if (generating) return; // Prevent duplicate submissions
     const targetProjectId = selectedProjectId;
     setGenerating(true);
     setGenerationError(null);
@@ -365,14 +472,19 @@ export default function HomePage() {
       const gen = await generateRecommendations(targetProjectId, token, csrfToken);
       if (activeProjectIdRef.current === targetProjectId) {
         setLatestGeneration(gen);
+        if (gen.status === "succeeded") {
+          setGenerating(false);
+        } else if (gen.status === "failed") {
+          setGenerating(false);
+          setGenerationError(gen.error_message || "Generation failed. Please try again.");
+        } else {
+          startPollingRecommendations(targetProjectId, gen.id);
+        }
       }
     } catch (err: unknown) {
       if (activeProjectIdRef.current === targetProjectId) {
-        setGenerationError(err instanceof Error ? err.message : "Failed to generate recommendations");
-      }
-    } finally {
-      if (activeProjectIdRef.current === targetProjectId) {
         setGenerating(false);
+        setGenerationError(err instanceof Error ? err.message : "Failed to generate recommendations");
       }
     }
   };
