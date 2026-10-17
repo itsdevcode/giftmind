@@ -3,7 +3,7 @@
 > **Turn Shared Memories Into Lasting Gifts.**
 
 <div align="center">
-  <img src="docs/images/giftmind_hero_banner.jpg" alt="GiftMind Platform Showcase — AI Gift Ideas & Story Keepsake" width="100%" />
+  <img src="docs/images/giftmind_hero_screenshot.png" alt="GiftMind Application — Full-Width Heritage Hero & Cultural Motifs" width="100%" />
 </div>
 
 An open-source AI gifting platform that curates thoughtful, budget-aware gift recommendations and transforms cherished personal memories into downloadable story keepsake PDFs.
@@ -25,12 +25,12 @@ Choosing gifts often defaults to impersonal gift cards or rushed online browsing
 ## 📸 Screenshots & Showcase
 
 <p align="center">
-  <img src="docs/images/giftmind_hero_banner.jpg" alt="GiftMind UI Overview" width="90%" />
+  <img src="docs/images/giftmind_hero_screenshot.png" alt="GiftMind Live Application Screenshot" width="100%" />
 </p>
 
 | View | Description | Preview |
 |---|---|---|
-| **Heritage Landing & Hero** | Full-width Indian cultural artwork blend with lotus and mandala motifs | `public/images/incredible_india_heritage.png` |
+| **Heritage Landing & Hero** | Full-width Indian cultural artwork blend with lotus and mandala motifs | [View Screenshot](docs/images/giftmind_hero_screenshot.png) |
 | **Unified Keepsake Studio** | Dual-pathway showcase for AI Gift Ideas and Story Keepsake | Interactive Next.js 15 App Router |
 | **Guided Memory Interview** | 5 canonical reflection prompts capturing authentic relationship context | Real-time word counter & validation |
 | **Story Editor & Archival PDF** | Full text review, custom dedication, and in-memory ReportLab PDF export | Downloadable vector PDF |
