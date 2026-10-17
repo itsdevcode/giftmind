@@ -33,24 +33,24 @@ export function StepIndicator({
                 type="button"
                 disabled={!isAccessible}
                 onClick={() => onStepClick?.(step.id)}
-                className={`w-full text-left p-3.5 rounded-xl border transition-all flex items-center gap-3 ${
+                className={`w-full text-left p-3.5 rounded-2xl border transition-all flex items-center gap-3 cursor-pointer ${
                   isCurrent
-                    ? "border-amber-500/50 bg-amber-950/20 shadow-sm"
+                    ? "border-amber-400/50 bg-gradient-to-r from-amber-950/30 to-[#0e1422] shadow-md shadow-amber-950/20 ring-1 ring-amber-400/25"
                     : isCompleted
-                    ? "border-emerald-500/30 bg-emerald-950/10 text-slate-300"
+                    ? "border-emerald-500/30 bg-emerald-950/15 text-slate-300 hover:border-emerald-500/50"
                     : "border-white/[0.06] bg-white/[0.02] text-slate-500 opacity-60 cursor-not-allowed"
                 }`}
               >
                 <div
-                  className={`w-7 h-7 rounded-lg flex items-center justify-center text-xs font-semibold flex-shrink-0 ${
+                  className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-semibold flex-shrink-0 transition-all ${
                     isCurrent
-                      ? "bg-amber-500 text-slate-950"
+                      ? "bg-gradient-to-tr from-amber-400 to-amber-300 text-slate-950 shadow-sm shadow-amber-500/30"
                       : isCompleted
-                      ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30"
+                      ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/40"
                       : "bg-white/[0.06] text-slate-400"
                   }`}
                 >
-                  {isCompleted ? <Check className="w-4 h-4" /> : step.id}
+                  {isCompleted ? <Check className="w-3.5 h-3.5 stroke-[2.5]" /> : step.id}
                 </div>
                 <div className="flex flex-col min-w-0">
                   <span
