@@ -21,6 +21,8 @@ def test_app_production_disables_docs() -> None:
         APP_ENV="production",
         DEBUG=False,
         JWT_SECRET_KEY="super-strong-production-signing-secret-key-at-least-32-bytes",
+        AI_PROVIDER="google",
+        GOOGLE_API_KEY="valid-google-production-api-key",
     )
     app = create_app(settings=prod_settings)
     assert app.openapi_url is None

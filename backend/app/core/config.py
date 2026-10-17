@@ -61,6 +61,15 @@ class Settings(BaseSettings):
     CSRF_COOKIE_NAME: str = "giftmind_csrf_token"
     CSRF_HEADER_NAME: str = "x-csrf-token"
 
+    # AI Provider & Inference Configuration
+    AI_PROVIDER: Literal["google", "mock"] = "google"
+    GOOGLE_API_KEY: str = Field(
+        default="",
+        description="Server-side API key for Google-hosted Gemma inference via google-genai",
+    )
+    GEMMA_MODEL: str = "gemma-4-26b-a4b-it"
+    AI_REQUEST_TIMEOUT_SECONDS: float = 90.0
+
     @model_validator(mode="after")
     def validate_production_security(self) -> "Settings":
         """Enforce strict cryptographic secret standards in production environments."""
@@ -92,6 +101,18 @@ class Settings(BaseSettings):
                 raise ValueError(
                     f"JWT_SECRET_KEY must be at least 32 characters long in production (current length: {len(val)})."
                 )
+
+            if self.AI_PROVIDER == "mock":
+                raise ValueError(
+                    "AI_PROVIDER='mock' is not allowed in production. Configure a real inference provider (e.g. 'google')."
+                )
+
+            if self.AI_PROVIDER == "google":
+                api_key = (self.GOOGLE_API_KEY or "").strip()
+                if not api_key:
+                    raise ValueError(
+                        "GOOGLE_API_KEY must be configured in production when AI_PROVIDER='google'."
+                    )
 
         return self
 
