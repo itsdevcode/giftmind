@@ -39,6 +39,28 @@ class Settings(BaseSettings):
         "http://127.0.0.1:3000",
     ]
 
+    # Authentication & Security Configuration
+    JWT_SECRET_KEY: str = Field(
+        default="giftmind-insecure-dev-secret-key-change-in-production-min32bytes!",
+        description="Secret key for signing JWT tokens",
+    )
+    JWT_ALGORITHM: str = "HS256"
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 15
+    REFRESH_TOKEN_EXPIRE_DAYS: int = 7
+
+    # Cookie Settings
+    AUTH_COOKIE_NAME: str = "giftmind_refresh_token"
+    AUTH_COOKIE_PATH: str = "/api/v1/auth"
+    AUTH_COOKIE_DOMAIN: str | None = None
+    AUTH_COOKIE_SECURE: bool | None = (
+        None  # None = dynamically deduced (True if production else False)
+    )
+    AUTH_COOKIE_SAMESITE: Literal["lax", "strict", "none"] = "lax"
+
+    # CSRF Settings
+    CSRF_COOKIE_NAME: str = "giftmind_csrf_token"
+    CSRF_HEADER_NAME: str = "x-csrf-token"
+
 
 @lru_cache
 def get_settings() -> Settings:
