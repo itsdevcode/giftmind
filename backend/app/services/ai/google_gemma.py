@@ -1,9 +1,11 @@
 import asyncio
 import json
 import logging
+import random
 import re
 from typing import Any
 
+import httpx
 from google import genai
 from google.genai import errors, types
 from pydantic import ValidationError
@@ -164,7 +166,7 @@ class GoogleGemmaAIProvider(AIProvider):
             response_mime_type="application/json",
         )
 
-        max_retries = 2
+        max_retries = 3
         base_backoff = 1.0
 
         for attempt in range(max_retries + 1):
@@ -216,6 +218,23 @@ class GoogleGemmaAIProvider(AIProvider):
                     f"AI inference request timed out after {self._timeout_seconds}s."
                 ) from err
 
+            except (httpx.TransportError, httpx.HTTPError) as net_err:
+                logger.warning(
+                    "Network error during Gemma generation on attempt %d/%d: %s",
+                    attempt + 1,
+                    max_retries + 1,
+                    type(net_err).__name__,
+                )
+                if attempt < max_retries:
+                    jitter = random.uniform(0.1, 0.5)
+                    backoff = min(base_backoff * (2**attempt) + jitter, 10.0)
+                    logger.info("Retrying after %.2fs due to network error...", backoff)
+                    await asyncio.sleep(backoff)
+                    continue
+                raise AIProviderUnavailableError(
+                    f"Network error communicating with Google AI service: {type(net_err).__name__}"
+                ) from net_err
+
             except errors.APIError as exc:
                 code = getattr(exc, "code", None)
                 msg = getattr(exc, "message", str(exc))
@@ -236,7 +255,6 @@ class GoogleGemmaAIProvider(AIProvider):
                 if code == 429:
                     logger.warning("Google API rate limit exceeded: %s", msg)
                     retry_after: float | None = None
-                    # Try to extract retry-after from error details or response headers
                     if hasattr(exc, "response") and exc.response is not None:
                         headers = getattr(exc.response, "headers", {})
                         if "retry-after" in headers:
@@ -246,13 +264,14 @@ class GoogleGemmaAIProvider(AIProvider):
                                 pass
 
                     if attempt < max_retries:
+                        jitter = random.uniform(0.1, 0.5)
                         backoff = (
                             retry_after
                             if retry_after is not None
-                            else (base_backoff * (2**attempt))
+                            else (base_backoff * (2**attempt) + jitter)
                         )
-                        backoff = min(backoff, 8.0)
-                        logger.info("Retrying after %.1fs due to rate limit...", backoff)
+                        backoff = min(backoff, 10.0)
+                        logger.info("Retrying after %.2fs due to rate limit...", backoff)
                         await asyncio.sleep(backoff)
                         continue
 
@@ -261,14 +280,15 @@ class GoogleGemmaAIProvider(AIProvider):
                         retry_after=retry_after,
                     ) from exc
 
-                # 500 / 503 / 504: Server errors (retryable)
+                # 500 / 502 / 503 / 504: Server errors (retryable)
                 if code in (500, 502, 503, 504):
                     logger.warning(
                         "Google API server error %d on attempt %d: %s", code, attempt + 1, msg
                     )
                     if attempt < max_retries:
-                        backoff = base_backoff * (2**attempt)
-                        logger.info("Retrying after %.1fs due to server error...", backoff)
+                        jitter = random.uniform(0.1, 0.5)
+                        backoff = min(base_backoff * (2**attempt) + jitter, 10.0)
+                        logger.info("Retrying after %.2fs due to server error...", backoff)
                         await asyncio.sleep(backoff)
                         continue
                     raise AIProviderUnavailableError(
@@ -317,7 +337,7 @@ class GoogleGemmaAIProvider(AIProvider):
             response_mime_type="application/json",
         )
 
-        max_retries = 2
+        max_retries = 3
         base_backoff = 1.0
 
         for attempt in range(max_retries + 1):
@@ -371,6 +391,25 @@ class GoogleGemmaAIProvider(AIProvider):
                     f"AI story inference request timed out after {self._timeout_seconds}s."
                 ) from err
 
+            except (httpx.TransportError, httpx.HTTPError) as net_err:
+                logger.warning(
+                    "Network error during Gemma story generation on attempt %d/%d: %s",
+                    attempt + 1,
+                    max_retries + 1,
+                    type(net_err).__name__,
+                )
+                if attempt < max_retries:
+                    jitter = random.uniform(0.1, 0.5)
+                    backoff = min(base_backoff * (2**attempt) + jitter, 10.0)
+                    logger.info(
+                        "Retrying story generation after %.2fs due to network error...", backoff
+                    )
+                    await asyncio.sleep(backoff)
+                    continue
+                raise AIProviderUnavailableError(
+                    f"Network error communicating with Google AI service: {type(net_err).__name__}"
+                ) from net_err
+
             except errors.APIError as exc:
                 code = getattr(exc, "code", None)
                 msg = getattr(exc, "message", str(exc))
@@ -401,14 +440,15 @@ class GoogleGemmaAIProvider(AIProvider):
                                 pass
 
                     if attempt < max_retries:
+                        jitter = random.uniform(0.1, 0.5)
                         backoff = (
                             retry_after
                             if retry_after is not None
-                            else (base_backoff * (2**attempt))
+                            else (base_backoff * (2**attempt) + jitter)
                         )
-                        backoff = min(backoff, 8.0)
+                        backoff = min(backoff, 10.0)
                         logger.info(
-                            "Retrying story generation after %.1fs due to rate limit...", backoff
+                            "Retrying story generation after %.2fs due to rate limit...", backoff
                         )
                         await asyncio.sleep(backoff)
                         continue
@@ -423,9 +463,10 @@ class GoogleGemmaAIProvider(AIProvider):
                         "Google API server error %d on attempt %d: %s", code, attempt + 1, msg
                     )
                     if attempt < max_retries:
-                        backoff = base_backoff * (2**attempt)
+                        jitter = random.uniform(0.1, 0.5)
+                        backoff = min(base_backoff * (2**attempt) + jitter, 10.0)
                         logger.info(
-                            "Retrying story generation after %.1fs due to server error...", backoff
+                            "Retrying story generation after %.2fs due to server error...", backoff
                         )
                         await asyncio.sleep(backoff)
                         continue

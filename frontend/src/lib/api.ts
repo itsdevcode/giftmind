@@ -103,8 +103,44 @@ export class ApiError extends Error {
   }
 }
 
+// Active session state and subscriber registry for synchronized token management
+let activeToken: string | null = null;
+let activeCsrfToken: string | null = null;
+let activeUser: User | null = null;
+let refreshPromise: Promise<AuthTokens | null> | null = null;
+
+type AuthListener = (session: {
+  token: string | null;
+  csrfToken: string | null;
+  user: User | null;
+}) => void;
+const authListeners = new Set<AuthListener>();
+
+export function setAuthSession(tokens: {
+  access_token: string;
+  csrf_token: string;
+  user: User;
+} | null) {
+  activeToken = tokens ? tokens.access_token : null;
+  activeCsrfToken = tokens ? tokens.csrf_token : null;
+  activeUser = tokens ? tokens.user : null;
+  authListeners.forEach((listener) =>
+    listener({ token: activeToken, csrfToken: activeCsrfToken, user: activeUser })
+  );
+}
+
+export function subscribeAuth(listener: AuthListener): () => void {
+  authListeners.add(listener);
+  listener({ token: activeToken, csrfToken: activeCsrfToken, user: activeUser });
+  return () => authListeners.delete(listener);
+}
+
+export function getActiveAuthSession() {
+  return { token: activeToken, csrfToken: activeCsrfToken, user: activeUser };
+}
+
 /**
- * Perform a typed API request to the backend.
+ * Perform a typed API request to the backend with automatic 401 token refresh mutex.
  */
 export async function fetchApi<T>(
   endpoint: string,
@@ -112,17 +148,20 @@ export async function fetchApi<T>(
 ): Promise<T> {
   const url = `${API_BASE_URL}${endpoint.startsWith("/") ? endpoint : `/${endpoint}`}`;
 
+  const resolvedToken = options?.token !== undefined ? options.token : activeToken;
+  const resolvedCsrf = options?.csrfToken !== undefined ? options.csrfToken : activeCsrfToken;
+
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     ...(options?.headers as Record<string, string>),
   };
 
-  if (options?.token) {
-    headers["Authorization"] = `Bearer ${options.token}`;
+  if (resolvedToken) {
+    headers["Authorization"] = `Bearer ${resolvedToken}`;
   }
 
-  if (options?.csrfToken) {
-    headers["X-CSRF-Token"] = options.csrfToken;
+  if (resolvedCsrf) {
+    headers["X-CSRF-Token"] = resolvedCsrf;
   }
 
   const response = await fetch(url, {
@@ -130,6 +169,35 @@ export async function fetchApi<T>(
     headers,
     credentials: "include",
   });
+
+  // If 401 Unauthorized occurs on an authenticated route (not an auth endpoint itself),
+  // refresh tokens using a single shared mutex promise and retry the request.
+  if (response.status === 401 && !endpoint.includes("/api/v1/auth/")) {
+    if (!refreshPromise) {
+      refreshPromise = (async () => {
+        try {
+          const newTokens = await refreshAuth(activeCsrfToken);
+          setAuthSession(newTokens);
+          return newTokens;
+        } catch {
+          setAuthSession(null);
+          return null;
+        } finally {
+          refreshPromise = null;
+        }
+      })();
+    }
+
+    const refreshed = await refreshPromise;
+    if (refreshed) {
+      // Retry original request with newly rotated credentials
+      return fetchApi<T>(endpoint, {
+        ...options,
+        token: refreshed.access_token,
+        csrfToken: refreshed.csrf_token,
+      });
+    }
+  }
 
   if (!response.ok) {
     let errorDetail = `API request failed with status ${response.status}`;
@@ -157,20 +225,24 @@ export async function registerUser(payload: {
   email: string;
   password: string;
 }): Promise<AuthTokens> {
-  return fetchApi<AuthTokens>("/api/v1/auth/register", {
+  const result = await fetchApi<AuthTokens>("/api/v1/auth/register", {
     method: "POST",
     body: JSON.stringify(payload),
   });
+  setAuthSession(result);
+  return result;
 }
 
 export async function loginUser(payload: {
   email: string;
   password: string;
 }): Promise<AuthTokens> {
-  return fetchApi<AuthTokens>("/api/v1/auth/login", {
+  const result = await fetchApi<AuthTokens>("/api/v1/auth/login", {
     method: "POST",
     body: JSON.stringify(payload),
   });
+  setAuthSession(result);
+  return result;
 }
 
 export async function refreshAuth(csrfToken?: string | null): Promise<AuthTokens> {
@@ -181,10 +253,14 @@ export async function refreshAuth(csrfToken?: string | null): Promise<AuthTokens
 }
 
 export async function logoutUser(csrfToken?: string | null): Promise<{ status: string }> {
-  return fetchApi<{ status: string }>("/api/v1/auth/logout", {
-    method: "POST",
-    csrfToken,
-  });
+  try {
+    return await fetchApi<{ status: string }>("/api/v1/auth/logout", {
+      method: "POST",
+      csrfToken,
+    });
+  } finally {
+    setAuthSession(null);
+  }
 }
 
 export async function getRecipients(
@@ -257,16 +333,15 @@ export async function createGiftProject(
 export async function generateRecommendations(
   projectId: string,
   token: string,
-  csrfToken: string
+  csrfToken: string,
+  background: boolean = true
 ): Promise<RecommendationGeneration> {
-  return fetchApi<RecommendationGeneration>(
-    `/api/v1/gift-projects/${projectId}/recommendations/generate`,
-    {
-      method: "POST",
-      token,
-      csrfToken,
-    }
-  );
+  const url = `/api/v1/gift-projects/${projectId}/recommendations/generate?background=${background}`;
+  return fetchApi<RecommendationGeneration>(url, {
+    method: "POST",
+    token,
+    csrfToken,
+  });
 }
 
 export async function getLatestRecommendations(
@@ -275,6 +350,20 @@ export async function getLatestRecommendations(
 ): Promise<RecommendationGeneration> {
   return fetchApi<RecommendationGeneration>(
     `/api/v1/gift-projects/${projectId}/recommendations`,
+    {
+      method: "GET",
+      token,
+    }
+  );
+}
+
+export async function getRecommendationGenerationStatus(
+  projectId: string,
+  generationId: string,
+  token: string
+): Promise<RecommendationGeneration> {
+  return fetchApi<RecommendationGeneration>(
+    `/api/v1/gift-projects/${projectId}/recommendations/${generationId}`,
     {
       method: "GET",
       token,

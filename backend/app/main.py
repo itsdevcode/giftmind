@@ -1,14 +1,22 @@
 import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 
 from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from sqlalchemy import update
 
 from app.api.v1.router import router as api_v1_router
 from app.core.config import Settings, get_settings
+from app.core.tasks import task_manager
 from app.db.session import create_engine_and_sessionmaker
+from app.models.recommendation import (
+    GiftRecommendationGeneration,
+    RecommendationGenerationStatus,
+)
+from app.models.story import StoryKeepsake, StoryKeepsakeStatus
 from app.schemas.health import HealthResponse
 
 logger = logging.getLogger(__name__)
@@ -26,10 +34,41 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         engine, session_factory = create_engine_and_sessionmaker(settings)
         app.state.engine = engine
         app.state.session_factory = session_factory
+        app.state.task_manager = task_manager
+
+        # Recover any orphaned pending generations/stories left behind by previous unexpected server shutdown
+        if not settings.DATABASE_URL.startswith("sqlite"):
+            try:
+                async with session_factory() as session:
+                    await session.execute(
+                        update(GiftRecommendationGeneration)
+                        .where(
+                            GiftRecommendationGeneration.status
+                            == RecommendationGenerationStatus.pending
+                        )
+                        .values(
+                            status=RecommendationGenerationStatus.failed,
+                            error_message="Generation was interrupted due to a server restart. Please retry.",
+                            updated_at=datetime.now(UTC),
+                        )
+                    )
+                    await session.execute(
+                        update(StoryKeepsake)
+                        .where(StoryKeepsake.status == StoryKeepsakeStatus.pending)
+                        .values(
+                            status=StoryKeepsakeStatus.failed,
+                            error_message="Story generation was interrupted due to a server restart. Please retry.",
+                            updated_at=datetime.now(UTC),
+                        )
+                    )
+                    await session.commit()
+            except Exception as exc:
+                logger.warning("Could not execute startup pending generation recovery: %s", exc)
 
         yield
 
-        # Shutdown actions: cleanly close database engine connection pool for this app
+        # Shutdown actions: cleanly cancel active background tasks and close database engine
+        await task_manager.shutdown(timeout=5.0)
         await engine.dispose()
 
     app = FastAPI(

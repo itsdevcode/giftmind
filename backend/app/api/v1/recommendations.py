@@ -1,15 +1,18 @@
 import logging
+import time
 import uuid
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_settings, get_current_user
 from app.core.config import Settings
+from app.core.tasks import task_manager
 from app.db.session import get_db
 from app.models.gift_project import GiftProject
 from app.models.recipient import Recipient
@@ -42,6 +45,117 @@ router = APIRouter(
 )
 
 
+async def _execute_generation_worker(
+    generation_id: uuid.UUID,
+    project_id: uuid.UUID,
+    user_id: uuid.UUID,
+    prompt_input: RecommendationPromptInput,
+    budget_min: Decimal,
+    budget_max: Decimal,
+    currency: str,
+    settings: Settings,
+    session_factory,
+) -> None:
+    """Asynchronous background worker task that generates AI gift recommendations and persists results."""
+    ai_provider = get_ai_provider(settings)
+    start_time = time.monotonic()
+    logger.info(
+        "Starting background recommendation generation (gen_id=%s, project_id=%s, user_id=%s, provider=%s, model=%s)",
+        generation_id,
+        project_id,
+        user_id,
+        ai_provider.provider_name,
+        ai_provider.model_name,
+    )
+    try:
+        raw_output = await ai_provider.generate_gift_recommendations(prompt_input)
+
+        # Validate budget bounds on generated recommendations
+        for idea in raw_output.recommendations:
+            if idea.estimated_budget < budget_min or idea.estimated_budget > budget_max:
+                raise ValueError(
+                    f"Generated gift idea '{idea.title}' budget (${idea.estimated_budget}) "
+                    f"exceeds project boundaries [${budget_min}, ${budget_max}]."
+                )
+
+        async with session_factory() as session:
+            gen = await session.get(GiftRecommendationGeneration, generation_id)
+            if not gen or gen.status != RecommendationGenerationStatus.pending:
+                logger.warning(
+                    "Generation %s is no longer pending; aborting background write.", generation_id
+                )
+                return
+
+            db_recommendations = [
+                GiftRecommendation(
+                    generation_id=generation_id,
+                    gift_project_id=project_id,
+                    title=idea.title,
+                    description=idea.description,
+                    category=idea.category,
+                    personalization_reason=idea.personalization_reason,
+                    estimated_budget=idea.estimated_budget,
+                    currency=currency,
+                    presentation_idea=idea.presentation_idea,
+                )
+                for idea in raw_output.recommendations
+            ]
+            session.add_all(db_recommendations)
+            gen.status = RecommendationGenerationStatus.succeeded
+            gen.error_message = None
+            await session.commit()
+            elapsed = time.monotonic() - start_time
+            logger.info(
+                "Background recommendation generation succeeded (gen_id=%s, project_id=%s, elapsed=%.2fs)",
+                generation_id,
+                project_id,
+                elapsed,
+            )
+
+    except Exception as exc:
+        elapsed = time.monotonic() - start_time
+        category = type(exc).__name__
+        if isinstance(exc, AIModelNotFoundError):
+            error_message = "The configured AI model was not found on the inference host."
+        elif isinstance(exc, AIAuthenticationError):
+            error_message = "The AI inference service authentication failed. Please verify API key configuration."
+        elif isinstance(exc, AIRateLimitError):
+            error_message = "The AI recommendation service is currently busy. Please wait a moment and try again."
+        elif isinstance(exc, AIInferenceTimeoutError):
+            error_message = "The AI inference request timed out. Please try again."
+        elif isinstance(exc, AIProviderUnavailableError):
+            error_message = (
+                "The AI inference service is temporarily unavailable. Please try again shortly."
+            )
+        elif isinstance(exc, (AIResponseValidationError, AIProviderError)):
+            error_message = "The AI service returned an invalid or malformed recommendation output. Please retry."
+        elif isinstance(exc, ValueError):
+            error_message = str(exc)
+        else:
+            error_message = "An unexpected error occurred while communicating with the AI service. Please try again."
+
+        logger.error(
+            "Background recommendation generation failed (gen_id=%s, project_id=%s, provider=%s, elapsed=%.2fs, category=%s, err=%s)",
+            generation_id,
+            project_id,
+            ai_provider.provider_name,
+            elapsed,
+            category,
+            error_message,
+        )
+        try:
+            async with session_factory() as session:
+                gen = await session.get(GiftRecommendationGeneration, generation_id)
+                if gen and gen.status == RecommendationGenerationStatus.pending:
+                    gen.status = RecommendationGenerationStatus.failed
+                    gen.error_message = error_message
+                    await session.commit()
+        except Exception as db_err:
+            logger.critical(
+                "Failed to update generation %s status to failed: %s", generation_id, db_err
+            )
+
+
 @router.post(
     "/generate",
     response_model=GiftRecommendationGenerationRead,
@@ -50,13 +164,16 @@ router = APIRouter(
 )
 async def generate_recommendations(
     project_id: uuid.UUID,
+    request: Request,
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
     settings: Annotated[Settings, Depends(get_current_settings)],
+    background: Annotated[
+        bool, Query(description="Run generation asynchronously in the background")
+    ] = False,
 ) -> GiftRecommendationGenerationRead:
     """Generate exactly 3 personalized, budget-aware gift recommendations using AI for an owned project."""
     # 1. Enforce project ownership and acquire row-level lock on the project
-    # This guarantees that simultaneous generation requests for the same gift project cannot race
     project_res = await db.execute(
         select(GiftProject)
         .where(
@@ -72,7 +189,7 @@ async def generate_recommendations(
             detail="Gift project not found.",
         )
 
-    # 2. Check for active pending generation; recover stale/abandoned ones (> timeout + 30s old)
+    # 2. Check for active pending generation; recover stale/abandoned ones
     active_gen_res = await db.execute(
         select(GiftRecommendationGeneration).where(
             GiftRecommendationGeneration.gift_project_id == project_id,
@@ -84,7 +201,12 @@ async def generate_recommendations(
         stale_threshold = datetime.now(UTC) - timedelta(
             seconds=settings.AI_REQUEST_TIMEOUT_SECONDS + 30.0
         )
-        if active_gen.created_at < stale_threshold:
+        created_at = (
+            active_gen.created_at
+            if active_gen.created_at.tzinfo
+            else active_gen.created_at.replace(tzinfo=UTC)
+        )
+        if created_at < stale_threshold:
             logger.warning(
                 "Marking stale pending generation %s as failed (created %s)",
                 active_gen.id,
@@ -138,8 +260,6 @@ async def generate_recommendations(
     )
     db.add(generation)
     try:
-        # Commit immediately so the claim is active, visible, and row locks are released
-        # before slow model inference begins
         await db.commit()
         await db.refresh(generation)
     except IntegrityError:
@@ -149,7 +269,38 @@ async def generate_recommendations(
             detail="A recommendation generation is currently in progress for this gift project.",
         ) from None
 
-    # 6. Execute inference and handle failures safely without partial recommendation writes
+    # 6. If background execution is enabled (production default):
+    if background:
+        session_factory = getattr(request.app.state, "session_factory", None)
+        if session_factory is not None:
+            task_manager.spawn(
+                _execute_generation_worker(
+                    generation_id=generation.id,
+                    project_id=project.id,
+                    user_id=current_user.id,
+                    prompt_input=prompt_input,
+                    budget_min=project.budget_min,
+                    budget_max=project.budget_max,
+                    currency=project.currency,
+                    settings=settings,
+                    session_factory=session_factory,
+                ),
+                name=f"rec-gen-{generation.id}",
+            )
+        return GiftRecommendationGenerationRead(
+            id=generation.id,
+            gift_project_id=generation.gift_project_id,
+            user_id=generation.user_id,
+            provider=generation.provider,
+            model=generation.model,
+            prompt_version=generation.prompt_version,
+            status=generation.status.value,
+            error_message=None,
+            created_at=generation.created_at,
+            recommendations=[],
+        )
+
+    # 7. Synchronous fallback execution (for testing and direct CLI integrations)
     try:
         raw_output = await ai_provider.generate_gift_recommendations(prompt_input)
     except AIModelNotFoundError as err:
@@ -228,7 +379,7 @@ async def generate_recommendations(
             detail="An error occurred while generating gift recommendations. Please try again.",
         ) from None
 
-    # 7. Validate budget bounds on generated recommendations before committing
+    # Validate budget bounds on generated recommendations
     for idea in raw_output.recommendations:
         if idea.estimated_budget < project.budget_min or idea.estimated_budget > project.budget_max:
             logger.warning(
@@ -249,7 +400,7 @@ async def generate_recommendations(
                 detail="The AI model generated an idea outside the specified budget constraints. Please retry.",
             )
 
-    # 8. Persist exactly 3 recommendations atomically
+    # Persist exactly 3 recommendations atomically
     db_recommendations = [
         GiftRecommendation(
             generation_id=generation.id,
@@ -271,9 +422,8 @@ async def generate_recommendations(
     await db.commit()
     await db.refresh(generation)
 
-    # 8. Build and return structured response
     read_items = [GiftRecommendationRead.model_validate(r) for r in db_recommendations]
-    gen_read = GiftRecommendationGenerationRead(
+    return GiftRecommendationGenerationRead(
         id=generation.id,
         gift_project_id=generation.gift_project_id,
         user_id=generation.user_id,
@@ -285,7 +435,6 @@ async def generate_recommendations(
         created_at=generation.created_at,
         recommendations=read_items,
     )
-    return gen_read
 
 
 @router.get(
@@ -297,8 +446,9 @@ async def get_latest_recommendations(
     project_id: uuid.UUID,
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
+    settings: Annotated[Settings, Depends(get_current_settings)],
 ) -> GiftRecommendationGenerationRead:
-    """Retrieve the latest successful recommendation batch for an owned gift project."""
+    """Retrieve the latest recommendation batch for an owned gift project."""
     # 1. Enforce project ownership
     project_res = await db.execute(
         select(GiftProject).where(
@@ -313,13 +463,10 @@ async def get_latest_recommendations(
             detail="Gift project not found.",
         )
 
-    # 2. Find latest successful generation
+    # 2. Find latest generation
     gen_res = await db.execute(
         select(GiftRecommendationGeneration)
-        .where(
-            GiftRecommendationGeneration.gift_project_id == project_id,
-            GiftRecommendationGeneration.status == RecommendationGenerationStatus.succeeded,
-        )
+        .where(GiftRecommendationGeneration.gift_project_id == project_id)
         .order_by(GiftRecommendationGeneration.created_at.desc())
         .limit(1)
     )
@@ -330,13 +477,111 @@ async def get_latest_recommendations(
             detail="No recommendations have been generated for this gift project yet.",
         )
 
-    # 3. Retrieve recommendations for this generation
-    recs_res = await db.execute(
-        select(GiftRecommendation)
-        .where(GiftRecommendation.generation_id == generation.id)
-        .order_by(GiftRecommendation.created_at.asc(), GiftRecommendation.id.asc())
+    # Check for stale pending generation
+    if generation.status == RecommendationGenerationStatus.pending:
+        stale_threshold = datetime.now(UTC) - timedelta(
+            seconds=settings.AI_REQUEST_TIMEOUT_SECONDS + 30.0
+        )
+        created_at = (
+            generation.created_at
+            if generation.created_at.tzinfo
+            else generation.created_at.replace(tzinfo=UTC)
+        )
+        if created_at < stale_threshold:
+            generation.status = RecommendationGenerationStatus.failed
+            generation.error_message = "Generation timed out. Please retry."
+            await db.commit()
+            await db.refresh(generation)
+
+    # 3. Retrieve recommendations if succeeded
+    recs = []
+    if generation.status == RecommendationGenerationStatus.succeeded:
+        recs_res = await db.execute(
+            select(GiftRecommendation)
+            .where(GiftRecommendation.generation_id == generation.id)
+            .order_by(GiftRecommendation.created_at.asc(), GiftRecommendation.id.asc())
+        )
+        recs = recs_res.scalars().all()
+
+    return GiftRecommendationGenerationRead(
+        id=generation.id,
+        gift_project_id=generation.gift_project_id,
+        user_id=generation.user_id,
+        provider=generation.provider,
+        model=generation.model,
+        prompt_version=generation.prompt_version,
+        status=generation.status.value,
+        error_message=generation.error_message,
+        created_at=generation.created_at,
+        recommendations=[GiftRecommendationRead.model_validate(r) for r in recs],
     )
-    recs = recs_res.scalars().all()
+
+
+@router.get(
+    "/{generation_id}",
+    response_model=GiftRecommendationGenerationRead,
+    summary="Get status and recommendations for a specific generation batch",
+)
+async def get_generation_status(
+    project_id: uuid.UUID,
+    generation_id: uuid.UUID,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    settings: Annotated[Settings, Depends(get_current_settings)],
+) -> GiftRecommendationGenerationRead:
+    """Retrieve status and recommendations for a specific generation batch."""
+    # 1. Enforce project ownership
+    project_res = await db.execute(
+        select(GiftProject).where(
+            GiftProject.id == project_id,
+            GiftProject.user_id == current_user.id,
+        )
+    )
+    if project_res.scalar_one_or_none() is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Gift project not found.",
+        )
+
+    # 2. Retrieve generation
+    gen_res = await db.execute(
+        select(GiftRecommendationGeneration).where(
+            GiftRecommendationGeneration.id == generation_id,
+            GiftRecommendationGeneration.gift_project_id == project_id,
+            GiftRecommendationGeneration.user_id == current_user.id,
+        )
+    )
+    generation = gen_res.scalar_one_or_none()
+    if generation is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Recommendation generation batch not found.",
+        )
+
+    # Stale recovery if pending
+    if generation.status == RecommendationGenerationStatus.pending:
+        stale_threshold = datetime.now(UTC) - timedelta(
+            seconds=settings.AI_REQUEST_TIMEOUT_SECONDS + 30.0
+        )
+        created_at = (
+            generation.created_at
+            if generation.created_at.tzinfo
+            else generation.created_at.replace(tzinfo=UTC)
+        )
+        if created_at < stale_threshold:
+            generation.status = RecommendationGenerationStatus.failed
+            generation.error_message = "Generation timed out. Please retry."
+            await db.commit()
+            await db.refresh(generation)
+
+    recs = []
+    if generation.status == RecommendationGenerationStatus.succeeded:
+        recs_res = await db.execute(
+            select(GiftRecommendation)
+            .where(GiftRecommendation.generation_id == generation.id)
+            .order_by(GiftRecommendation.created_at.asc(), GiftRecommendation.id.asc())
+        )
+        recs = recs_res.scalars().all()
 
     return GiftRecommendationGenerationRead(
         id=generation.id,
