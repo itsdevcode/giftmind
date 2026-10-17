@@ -51,6 +51,13 @@ jobs:
           cd backend
           ruff check app tests
 
+      - name: Run Alembic Migrations
+        env:
+          DATABASE_URL: postgresql+asyncpg://giftmind:giftmind_test_password@localhost:5432/giftmind_test
+        run: |
+          cd backend
+          alembic upgrade head
+
       - name: Run Pytest (PostgreSQL Integration)
         env:
           DATABASE_URL: postgresql+asyncpg://giftmind:giftmind_test_password@localhost:5432/giftmind_test

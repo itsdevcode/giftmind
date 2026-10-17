@@ -78,7 +78,7 @@ def upgrade() -> None:
     sa.ForeignKeyConstraint(['user_id'], ['users.id'], ondelete='CASCADE'),
     sa.PrimaryKeyConstraint('id')
     )
-    op.create_index('ix_gift_projects_recipient_id', 'gift_projects', ['recipient_id'], unique=False)
+    op.create_index(op.f('ix_gift_projects_recipient_id'), 'gift_projects', ['recipient_id'], unique=False)
     op.create_index('ix_gift_projects_status', 'gift_projects', ['status'], unique=False)
     op.create_index(op.f('ix_gift_projects_user_id'), 'gift_projects', ['user_id'], unique=False)
     op.create_index('ix_gift_projects_user_id_created_at', 'gift_projects', ['user_id', 'created_at'], unique=False)
@@ -90,7 +90,7 @@ def downgrade() -> None:
     op.drop_index('ix_gift_projects_user_id_created_at', table_name='gift_projects')
     op.drop_index(op.f('ix_gift_projects_user_id'), table_name='gift_projects')
     op.drop_index('ix_gift_projects_status', table_name='gift_projects')
-    op.drop_index('ix_gift_projects_recipient_id', table_name='gift_projects')
+    op.drop_index(op.f('ix_gift_projects_recipient_id'), table_name='gift_projects')
     op.drop_table('gift_projects')
     sa.Enum(name='gift_project_status').drop(op.get_bind(), checkfirst=True)
     op.drop_index('ix_refresh_tokens_user_id_revoked', table_name='refresh_tokens')

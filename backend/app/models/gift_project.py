@@ -105,6 +105,5 @@ class GiftProject(Base):
             name="ck_gift_projects_budget_max_gte_min",
         ),
         Index("ix_gift_projects_user_id_created_at", "user_id", "created_at"),
-        Index("ix_gift_projects_recipient_id", "recipient_id"),
         Index("ix_gift_projects_status", "status"),
     )
