@@ -44,39 +44,6 @@ export function AppHeader({
           </div>
         </Link>
 
-        {/* Floating Navigation Pill Selector */}
-        <nav
-          aria-label="Experience Switcher"
-          className="hidden sm:flex items-center p-1 rounded-full bg-white/[0.03] border border-white/[0.08] shadow-inner"
-        >
-          <button
-            type="button"
-            id="nav-experience-gifts"
-            onClick={() => onSelectExperience("gifts")}
-            className={`flex items-center gap-1.5 px-3.5 py-1 rounded-full text-xs font-medium transition-all cursor-pointer ${
-              activeExperience === "gifts"
-                ? "bg-amber-400/15 text-amber-300 border border-amber-400/30 shadow-sm"
-                : "text-slate-400 hover:text-slate-200 border border-transparent"
-            }`}
-          >
-            <Gift className="w-3.5 h-3.5 text-amber-400" />
-            <span>AI Gift Ideas</span>
-          </button>
-          <button
-            type="button"
-            id="nav-experience-story"
-            onClick={() => onSelectExperience("story")}
-            className={`flex items-center gap-1.5 px-3.5 py-1 rounded-full text-xs font-medium transition-all cursor-pointer ${
-              activeExperience === "story"
-                ? "bg-violet-400/15 text-violet-300 border border-violet-400/30 shadow-sm"
-                : "text-slate-400 hover:text-slate-200 border border-transparent"
-            }`}
-          >
-            <BookHeart className="w-3.5 h-3.5 text-violet-400" />
-            <span>Story Keepsake</span>
-          </button>
-        </nav>
-
         {/* User / External Actions */}
         <div className="flex items-center gap-2.5">
           <a
