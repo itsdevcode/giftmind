@@ -25,9 +25,11 @@ async def test_database_engine_and_session_smoke(test_settings: Settings) -> Non
 
 @pytest.mark.asyncio
 async def test_declarative_base_metadata() -> None:
-    """Declarative Base should have an initialized metadata registry."""
+    """Declarative Base should have initialized metadata with Phase 2 domain tables."""
     assert Base.metadata is not None
-    assert len(Base.metadata.tables) == 0  # No premature domain tables
+    # Phase 2 tables: users, recipients, gift_projects, refresh_tokens
+    registered_tables = set(Base.metadata.tables.keys())
+    assert {"users", "recipients", "gift_projects", "refresh_tokens"}.issubset(registered_tables)
 
 
 @pytest.mark.asyncio
