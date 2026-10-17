@@ -51,6 +51,7 @@ def test_production_jwt_secret_validation_accepts_strong_secret() -> None:
         APP_ENV="production",
         DEBUG=False,
         JWT_SECRET_KEY="a-very-strong-production-signing-secret-that-exceeds-32-bytes-safely!",
+        AI_PROVIDER="ollama",
     )
     assert settings.APP_ENV == "production"
     assert settings.JWT_SECRET_KEY.startswith("a-very-strong")
