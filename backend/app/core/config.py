@@ -1,7 +1,7 @@
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field, model_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -33,11 +33,18 @@ class Settings(BaseSettings):
     DB_POOL_RECYCLE: int = 1800
     DB_ECHO: bool = False
 
-    # CORS configuration: comma-separated list of origins or list of strings
-    CORS_ORIGINS: list[str] = [
+    # CORS configuration: list of origins or comma-separated string from deployment environments
+    CORS_ORIGINS: list[str] | str = [
         "http://localhost:3000",
         "http://127.0.0.1:3000",
     ]
+
+    @property
+    def cors_origins_list(self) -> list[str]:
+        """Parsed list of CORS origin strings for middleware configuration."""
+        if isinstance(self.CORS_ORIGINS, str):
+            return [origin.strip() for origin in self.CORS_ORIGINS.split(",") if origin.strip()]
+        return list(self.CORS_ORIGINS)
 
     # Authentication & Security Configuration
     JWT_SECRET_KEY: str = Field(
@@ -69,6 +76,18 @@ class Settings(BaseSettings):
     )
     GEMMA_MODEL: str = "gemma-4-26b-a4b-it"
     AI_REQUEST_TIMEOUT_SECONDS: float = 90.0
+
+    @field_validator("DATABASE_URL", mode="before")
+    @classmethod
+    def normalize_database_url(cls, v: str) -> str:
+        """Convert standard postgres:// and postgresql:// provider URLs to postgresql+asyncpg:// format."""
+        if isinstance(v, str):
+            v_str = v.strip()
+            if v_str.startswith("postgres://"):
+                return v_str.replace("postgres://", "postgresql+asyncpg://", 1)
+            if v_str.startswith("postgresql://") and not v_str.startswith("postgresql+"):
+                return v_str.replace("postgresql://", "postgresql+asyncpg://", 1)
+        return v
 
     @model_validator(mode="after")
     def validate_production_security(self) -> "Settings":
