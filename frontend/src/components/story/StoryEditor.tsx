@@ -78,8 +78,8 @@ export function StoryEditor({
           <h3 className="text-xl font-semibold text-white tracking-tight">
             &ldquo;{story.title}&rdquo;
           </h3>
-          <p className="text-xs text-slate-400 font-mono">
-            {story.model_name} • Prompt {story.prompt_version}
+          <p className="text-xs text-slate-400">
+            Personalized Narrative Keepsake • Ready for PDF Export
           </p>
         </div>
 

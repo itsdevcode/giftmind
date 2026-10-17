@@ -11,7 +11,7 @@ import { GiftRecommendationsWorkspace } from "@/components/gifts/GiftRecommendat
 import { MemoryInterview } from "@/components/story/MemoryInterview";
 import { StoryEditor } from "@/components/story/StoryEditor";
 import { AuthModal } from "@/components/auth/AuthModal";
-import { SAMPLE_DEMO_DATA } from "@/lib/sampleDemoData";
+import { CulturalDivider, HeritageArch, MandalaAccent } from "@/components/illustrations/CulturalMotifs";
 import {
   loginUser,
   registerUser,
@@ -46,7 +46,6 @@ export default function HomePage() {
   // Navigation & Experience Selection
   const [activeExperience, setActiveExperience] = useState<"gifts" | "story">("gifts");
   const [currentStep, setCurrentStep] = useState<number>(1);
-  const [isDemoMode, setIsDemoMode] = useState(false);
 
   // Auth State
   const [token, setToken] = useState<string | null>(null);
@@ -161,7 +160,6 @@ export default function HomePage() {
   }, [csrfToken, selectedRecipientId, selectedProjectId]);
 
   useEffect(() => {
-    if (isDemoMode) return;
     if (!token) {
       setRecipients([]);
       setProjects([]);
@@ -171,7 +169,7 @@ export default function HomePage() {
       return;
     }
     loadWorkspaceData(token);
-  }, [token, loadWorkspaceData, isDemoMode]);
+  }, [token, loadWorkspaceData]);
 
   // Reset project-scoped subresources immediately on project switch
   const resetProjectSubresources = useCallback(() => {
@@ -199,7 +197,6 @@ export default function HomePage() {
 
   // Load project subresources whenever selectedProjectId changes
   useEffect(() => {
-    if (isDemoMode) return;
     activeProjectIdRef.current = selectedProjectId;
     if (!token || !selectedProjectId) {
       resetProjectSubresources();
@@ -256,7 +253,7 @@ export default function HomePage() {
           setStory(null);
         }
       });
-  }, [selectedProjectId, token, resetProjectSubresources, isDemoMode]);
+  }, [selectedProjectId, token, resetProjectSubresources]);
 
   // Auth Submit Handler
   const handleAuthSubmit = async (
@@ -266,7 +263,6 @@ export default function HomePage() {
     setAuthError(null);
     setAuthSubmitting(true);
     try {
-      setIsDemoMode(false);
       let authResult;
       if (mode === "register") {
         authResult = await registerUser({
@@ -302,7 +298,6 @@ export default function HomePage() {
     setToken(null);
     setCsrfToken(null);
     setCurrentUser(null);
-    setIsDemoMode(false);
     resetProjectSubresources();
     setCurrentStep(1);
   };
@@ -447,10 +442,6 @@ export default function HomePage() {
 
   // PDF Download
   const handleDownloadPdf = async () => {
-    if (isDemoMode) {
-      alert("Sample Demo Mode: PDF download demonstrates full pipeline when authenticated with active projects.");
-      return;
-    }
     if (!token || !selectedProjectId) {
       if (!currentUser) setAuthModalOpen(true);
       return;
@@ -468,21 +459,6 @@ export default function HomePage() {
     document.body.removeChild(a);
   };
 
-  // Demo Explorer
-  const handleExploreDemo = () => {
-    setIsDemoMode(true);
-    setRecipients([SAMPLE_DEMO_DATA.recipient]);
-    setSelectedRecipientId(SAMPLE_DEMO_DATA.recipient.id);
-    setProjects([SAMPLE_DEMO_DATA.project]);
-    setSelectedProjectId(SAMPLE_DEMO_DATA.project.id);
-    setLatestGeneration(SAMPLE_DEMO_DATA.generation);
-    setMemories(SAMPLE_DEMO_DATA.memories);
-    setHasSufficientMemories(true);
-    setMemoryGuidance("Sample demo project loaded. Explore gift ideas and editable keepsake story.");
-    setStory(SAMPLE_DEMO_DATA.story);
-    setCurrentStep(3);
-  };
-
   // Active Recipient and Project references
   const currentRecipient = recipients.find((r) => r.id === selectedRecipientId);
   const currentProject = projects.find((p) => p.id === selectedProjectId);
@@ -495,7 +471,7 @@ export default function HomePage() {
         activeExperience={activeExperience}
         onSelectExperience={(exp) => {
           setActiveExperience(exp);
-          if (currentStep < 3 && (selectedProjectId || isDemoMode)) {
+          if (currentStep < 3 && selectedProjectId) {
             setCurrentStep(3);
           }
         }}
@@ -508,7 +484,7 @@ export default function HomePage() {
         <HeroSection
           onSelectGifts={() => {
             setActiveExperience("gifts");
-            if (!currentUser && !isDemoMode) {
+            if (!currentUser) {
               setAuthModalOpen(true);
             } else {
               setCurrentStep(3);
@@ -516,39 +492,21 @@ export default function HomePage() {
           }}
           onSelectStory={() => {
             setActiveExperience("story");
-            if (!currentUser && !isDemoMode) {
+            if (!currentUser) {
               setAuthModalOpen(true);
             } else {
               setCurrentStep(3);
             }
           }}
-          onExploreDemo={handleExploreDemo}
         />
 
-        {/* Demo Mode Banner */}
-        {isDemoMode && (
-          <div className="max-w-4xl mx-auto w-full px-4 mb-4">
-            <div className="p-3 rounded-xl bg-amber-500/15 border border-amber-500/30 text-amber-200 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-2 shadow-sm">
-              <span className="font-medium">
-                ✨ Interactive Sample Demo Active (Maya Lin • 30th Birthday).
-              </span>
-              <button
-                type="button"
-                onClick={() => {
-                  setIsDemoMode(false);
-                  resetProjectSubresources();
-                  setCurrentStep(1);
-                }}
-                className="text-amber-300 underline font-semibold text-left sm:text-right"
-              >
-                Exit Demo
-              </button>
-            </div>
-          </div>
-        )}
+        {/* Subtle Cultural Section Divider */}
+        <div className="max-w-4xl mx-auto px-6 w-full">
+          <CulturalDivider className="my-4 opacity-70" />
+        </div>
 
-        {/* Progressive Step Indicator (when signed in or in demo mode) */}
-        {(currentUser || isDemoMode) && (
+        {/* Progressive Step Indicator (when signed in) */}
+        {currentUser && (
           <div className="max-w-5xl mx-auto px-4 w-full">
             <StepIndicator
               steps={PROGRESS_STEPS}
@@ -564,7 +522,7 @@ export default function HomePage() {
             <div className="flex items-center justify-center p-16">
               <div className="w-8 h-8 border-2 border-amber-500 border-t-transparent rounded-full animate-spin" />
             </div>
-          ) : !currentUser && !isDemoMode ? (
+          ) : !currentUser ? (
             /* Unauthenticated Visitor Landing Preview */
             <div className="space-y-8 my-6">
               <ExperienceSelector
@@ -575,27 +533,34 @@ export default function HomePage() {
                 }}
               />
 
-              <div className="p-8 sm:p-12 saas-card max-w-2xl mx-auto text-center space-y-4 border-amber-500/20">
-                <h3 className="text-xl font-semibold text-white tracking-tight">
+              <div className="relative overflow-hidden p-8 sm:p-12 saas-card max-w-2xl mx-auto text-center space-y-4 border-amber-500/20 shadow-xl shadow-black/40">
+                {/* Decorative background mandala */}
+                <div className="pointer-events-none absolute -right-6 -bottom-6 opacity-10 text-amber-400">
+                  <MandalaAccent className="w-40 h-40" />
+                </div>
+                <div className="pointer-events-none absolute -left-6 -top-6 opacity-10 text-violet-400">
+                  <MandalaAccent className="w-40 h-40" />
+                </div>
+
+                <div className="relative z-10 flex justify-center mb-1">
+                  <div className="w-10 h-10 rounded-full bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400">
+                    <HeritageArch className="w-5 h-5" />
+                  </div>
+                </div>
+
+                <h3 className="relative z-10 text-xl font-semibold text-white tracking-tight">
                   Ready to turn memories into a gift they&apos;ll treasure?
                 </h3>
-                <p className="text-sm text-slate-300 max-w-md mx-auto leading-relaxed">
+                <p className="relative z-10 text-sm text-slate-300 max-w-md mx-auto leading-relaxed">
                   Sign in or create a free account to craft personalized gift recommendations and generate heartwarming narrative keepsakes.
                 </p>
-                <div className="pt-2 flex flex-wrap justify-center gap-3">
+                <div className="relative z-10 pt-3 flex justify-center">
                   <button
                     type="button"
                     onClick={() => setAuthModalOpen(true)}
-                    className="px-6 py-2.5 btn-primary text-xs font-semibold"
+                    className="px-8 py-3 btn-primary text-sm font-semibold shadow-lg shadow-amber-500/20 hover:shadow-amber-500/30 cursor-pointer"
                   >
                     Get Started Free
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleExploreDemo}
-                    className="px-6 py-2.5 btn-secondary text-xs font-medium"
-                  >
-                    Explore Sample Demo
                   </button>
                 </div>
               </div>
