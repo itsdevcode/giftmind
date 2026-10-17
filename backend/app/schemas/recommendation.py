@@ -35,9 +35,26 @@ class RawGiftRecommendationOutput(BaseModel):
                 f"Expected exactly 3 gift recommendations, received {len(self.recommendations)}"
             )
 
-        titles = [r.title.strip().lower() for r in self.recommendations]
-        if len(set(titles)) < 3:
-            raise ValueError("All 3 gift recommendations must be meaningfully distinct")
+        # Check distinct titles (exact and normalized prefix/word set)
+        normalized_titles = [r.title.strip().lower() for r in self.recommendations]
+        if len(set(normalized_titles)) < 3:
+            raise ValueError("All 3 gift recommendations must have distinct titles.")
+
+        # Check distinct descriptions
+        normalized_descs = [r.description.strip().lower() for r in self.recommendations]
+        if len(set(normalized_descs)) < 3:
+            raise ValueError("All 3 gift recommendations must have distinct descriptions.")
+
+        # Ensure titles are not substrings or excessive word overlaps of one another
+        title_word_sets = [set(t.split()) for t in normalized_titles]
+        for i in range(len(title_word_sets)):
+            for j in range(i + 1, len(title_word_sets)):
+                intersection = title_word_sets[i].intersection(title_word_sets[j])
+                smaller_len = min(len(title_word_sets[i]), len(title_word_sets[j]))
+                if smaller_len > 1 and len(intersection) >= smaller_len:
+                    raise ValueError(
+                        f"Gift ideas '{self.recommendations[i].title}' and '{self.recommendations[j].title}' are too similar."
+                    )
 
         return self
 

@@ -1,4 +1,6 @@
+import asyncio
 import uuid
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from unittest.mock import AsyncMock, patch
 
@@ -171,7 +173,7 @@ async def test_ai_provider_timeout_handling(client: AsyncClient, test_app) -> No
             headers=headers,
         )
         assert res.status_code == 503
-        assert "timed out" in res.json()["detail"]
+        assert "timed out" in res.json()["detail"].lower()
 
     # Verify database state has failed generation and 0 recommendations
     session_factory = test_app.state.session_factory
@@ -250,35 +252,122 @@ async def test_ai_malformed_json_handling(client: AsyncClient) -> None:
             headers=headers,
         )
         assert res.status_code == 502
-        assert "Invalid JSON" in res.json()["detail"]
+        assert "invalid or malformed" in res.json()["detail"].lower()
 
 
 @pytest.mark.asyncio
-async def test_concurrent_generation_prevention(client: AsyncClient, test_app) -> None:
-    """A second generation attempt while a prior generation is still marked 'pending' returns 409 Conflict."""
+async def test_concurrent_generation_simultaneous_requests(client: AsyncClient) -> None:
+    """When two simultaneous generation requests hit the same gift project,
+    the row lock and pending check guarantee only one request succeeds (201)
+    and the other receives 409 Conflict.
+    """
     token, _, proj_id = await _create_user_and_project(
-        client, "Racer User", "racer_gen@example.com"
+        client, "Simultaneous Racer", "simultaneous_racer@example.com"
     )
     headers = {"Authorization": f"Bearer {token}"}
 
-    # Artificially insert a pending generation in DB
+    async def _post_gen():
+        return await client.post(
+            f"/api/v1/gift-projects/{proj_id}/recommendations/generate",
+            headers=headers,
+        )
+
+    res1, res2 = await asyncio.gather(_post_gen(), _post_gen())
+    status_codes = sorted([res1.status_code, res2.status_code])
+    assert status_codes == [201, 409]
+
+
+@pytest.mark.asyncio
+async def test_stale_pending_generation_recovery(client: AsyncClient, test_app) -> None:
+    """When an abandoned/stale pending generation (> 75s old) is present, the next request
+    recovers by marking the stale run as failed and proceeding to generate new recommendations.
+    """
+    token, _, proj_id = await _create_user_and_project(
+        client, "Stale User", "stale_gen@example.com"
+    )
+    headers = {"Authorization": f"Bearer {token}"}
+
+    # Insert an abandoned pending generation from 10 minutes ago
     session_factory = test_app.state.session_factory
     async with session_factory() as session:
-        pending_gen = GiftRecommendationGeneration(
+        stale_gen = GiftRecommendationGeneration(
             gift_project_id=uuid.UUID(proj_id),
             user_id=(await session.get(GiftProject, uuid.UUID(proj_id))).user_id,
             provider="mock",
             model="mock-gemma",
             prompt_version="v1",
             status=RecommendationGenerationStatus.pending,
+            created_at=datetime.now(UTC) - timedelta(minutes=10),
+            updated_at=datetime.now(UTC) - timedelta(minutes=10),
         )
-        session.add(pending_gen)
+        session.add(stale_gen)
         await session.commit()
+        stale_id = stale_gen.id
 
-    # Attempt generate -> 409
+    # New generation should recover and succeed with 201
     res = await client.post(
         f"/api/v1/gift-projects/{proj_id}/recommendations/generate",
         headers=headers,
     )
-    assert res.status_code == 409
-    assert "currently in progress" in res.json()["detail"]
+    assert res.status_code == 201
+    data = res.json()
+    assert data["status"] == "succeeded"
+
+    # Confirm stale record was marked failed
+    async with session_factory() as session:
+        recovered = await session.get(GiftRecommendationGeneration, stale_id)
+        assert recovered.status == RecommendationGenerationStatus.failed
+        assert "abandoned" in recovered.error_message.lower()
+
+
+@pytest.mark.asyncio
+async def test_budget_boundary_enforcement(client: AsyncClient) -> None:
+    """When generated recommendations violate project budget bounds, 502 Bad Gateway is returned
+    and no partial recommendations are persisted.
+    """
+    token, _, proj_id = await _create_user_and_project(
+        client, "Budget Violator", "violator@example.com"
+    )
+    headers = {"Authorization": f"Bearer {token}"}
+
+    from app.schemas.recommendation import RawGiftIdea, RawGiftRecommendationOutput
+
+    out_of_bounds_output = RawGiftRecommendationOutput(
+        recommendations=[
+            RawGiftIdea(
+                title="Super Expensive Diamond Roaster",
+                description="An insanely expensive gold-plated coffee roaster costing thousands.",
+                category="Luxury",
+                personalization_reason="Far exceeds the requested budget boundaries.",
+                estimated_budget=Decimal("5000.00"),  # Project max is 150.00
+                presentation_idea="Delivered on a silk pillow in an armored vehicle.",
+            ),
+            RawGiftIdea(
+                title="Second Luxury Item",
+                description="Another luxury gift that violates project budget bounds completely.",
+                category="Luxury",
+                personalization_reason="Too expensive for the project.",
+                estimated_budget=Decimal("6000.00"),
+                presentation_idea="Gold foil wrapping.",
+            ),
+            RawGiftIdea(
+                title="Third Luxury Item",
+                description="Third luxury item that violates project budget bounds completely.",
+                category="Luxury",
+                personalization_reason="Too expensive for the project.",
+                estimated_budget=Decimal("7000.00"),
+                presentation_idea="Diamond box.",
+            ),
+        ]
+    )
+
+    with patch(
+        "app.services.ai.mock.MockAIProvider.generate_gift_recommendations",
+        new=AsyncMock(return_value=out_of_bounds_output),
+    ):
+        res = await client.post(
+            f"/api/v1/gift-projects/{proj_id}/recommendations/generate",
+            headers=headers,
+        )
+        assert res.status_code == 502
+        assert "budget constraints" in res.json()["detail"].lower()

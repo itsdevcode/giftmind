@@ -58,8 +58,10 @@ async def run_smoke_test(ollama_url: str, model_name: str, timeout: float) -> in
     installed_models = status.get("installed_models", [])
     print(f"Found installed models: {installed_models or '(none)'}")
     if not status.get("model_installed"):
-        print(f"⚠️ Model '{model_name}' is not currently in installed models list.")
+        print(f"❌ Model '{model_name}' is not installed on Ollama server.")
         print(f"To download it, run: `ollama pull {model_name}`")
+        print("\nSmoke test BLOCKED: Target model unavailable. Aborting inference.")
+        return 1
 
     # Step 3: Inference check with sample recipient
     print(f"\n[3/3] Sending sample prompt to '{model_name}' (JSON format enforced)...")
@@ -95,13 +97,23 @@ async def run_smoke_test(ollama_url: str, model_name: str, timeout: float) -> in
         print(f"❌ Unexpected failure: {exc}")
         return 1
 
+    # Validate model response against recipient budget constraints and interests
+    budget_violations = [
+        idea for idea in result.recommendations
+        if idea.estimated_budget < sample_input.budget_min or idea.estimated_budget > sample_input.budget_max
+    ]
+    if budget_violations:
+        print(f"❌ Budget constraint check failed: {len(budget_violations)} ideas violate bounds [${sample_input.budget_min}, ${sample_input.budget_max}]")
+        return 1
+
     print(f"✅ Received response in {elapsed:.2f} seconds!")
     print(f"Found {len(result.recommendations)} recommendation ideas:\n")
 
     for idx, idea in enumerate(result.recommendations, start=1):
         print(f"  {idx}. {idea.title}")
+        print(f"     Description:   {idea.description}")
         print(f"     Category:      {idea.category}")
-        print(f"     Budget:        ${idea.estimated_budget:.2f} {idea.currency}")
+        print(f"     Budget:        ${idea.estimated_budget:.2f} {sample_input.currency}")
         print(f"     Why:           {idea.personalization_reason}")
         print(f"     Presentation:  {idea.presentation_idea}")
         print()

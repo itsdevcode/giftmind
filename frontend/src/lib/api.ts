@@ -16,22 +16,33 @@ export interface User {
   email: string;
   is_active: boolean;
   created_at: string;
+  updated_at?: string;
 }
 
 export interface AuthTokens {
   access_token: string;
   token_type: string;
-  csrf_token: string;
+  expires_at: string;
   user: User;
+  csrf_token: string;
 }
 
 export interface Recipient {
   id: string;
+  user_id: string;
   name: string;
   relationship: string;
-  interests?: string | null;
+  interests: string[];
   notes?: string | null;
   created_at: string;
+  updated_at: string;
+}
+
+export interface PaginatedResponse<T> {
+  items: T[];
+  total: number;
+  limit: number;
+  offset: number;
 }
 
 export interface GiftProject {
@@ -40,11 +51,12 @@ export interface GiftProject {
   title: string;
   occasion: string;
   occasion_date?: string | null;
-  budget_min?: string | number | null;
-  budget_max?: string | number | null;
+  budget_min: string | number;
+  budget_max: string | number;
   currency: string;
-  notes?: string | null;
+  status: "draft" | "in_progress" | "completed";
   created_at: string;
+  updated_at: string;
 }
 
 export interface GiftRecommendation {
@@ -52,6 +64,7 @@ export interface GiftRecommendation {
   gift_project_id: string;
   generation_id: string;
   title: string;
+  description: string;
   category: string;
   estimated_budget: string;
   currency: string;
@@ -60,6 +73,8 @@ export interface GiftRecommendation {
   created_at: string;
 }
 
+export type GenerationStatus = "pending" | "succeeded" | "failed";
+
 export interface RecommendationGeneration {
   id: string;
   gift_project_id: string;
@@ -67,7 +82,7 @@ export interface RecommendationGeneration {
   provider: string;
   model: string;
   prompt_version: string;
-  status: "pending" | "completed" | "failed";
+  status: GenerationStatus;
   error_message?: string | null;
   recommendations: GiftRecommendation[];
   created_at: string;
@@ -137,8 +152,8 @@ export async function registerUser(payload: {
   name: string;
   email: string;
   password: string;
-}): Promise<User> {
-  return fetchApi<User>("/api/v1/auth/register", {
+}): Promise<AuthTokens> {
+  return fetchApi<AuthTokens>("/api/v1/auth/register", {
     method: "POST",
     body: JSON.stringify(payload),
   });
@@ -154,11 +169,32 @@ export async function loginUser(payload: {
   });
 }
 
-export async function getRecipients(token: string): Promise<Recipient[]> {
-  return fetchApi<Recipient[]>("/api/v1/recipients", {
-    method: "GET",
-    token,
+export async function refreshAuth(csrfToken?: string | null): Promise<AuthTokens> {
+  return fetchApi<AuthTokens>("/api/v1/auth/refresh", {
+    method: "POST",
+    csrfToken,
   });
+}
+
+export async function logoutUser(csrfToken?: string | null): Promise<{ status: string }> {
+  return fetchApi<{ status: string }>("/api/v1/auth/logout", {
+    method: "POST",
+    csrfToken,
+  });
+}
+
+export async function getRecipients(
+  token: string,
+  limit: number = 50,
+  offset: number = 0
+): Promise<PaginatedResponse<Recipient>> {
+  return fetchApi<PaginatedResponse<Recipient>>(
+    `/api/v1/recipients?limit=${limit}&offset=${offset}`,
+    {
+      method: "GET",
+      token,
+    }
+  );
 }
 
 export async function createRecipient(
@@ -167,7 +203,7 @@ export async function createRecipient(
   payload: {
     name: string;
     relationship: string;
-    interests?: string;
+    interests?: string[];
     notes?: string;
   }
 ): Promise<Recipient> {
@@ -179,11 +215,18 @@ export async function createRecipient(
   });
 }
 
-export async function getGiftProjects(token: string): Promise<GiftProject[]> {
-  return fetchApi<GiftProject[]>("/api/v1/gift-projects", {
-    method: "GET",
-    token,
-  });
+export async function getGiftProjects(
+  token: string,
+  limit: number = 50,
+  offset: number = 0
+): Promise<PaginatedResponse<GiftProject>> {
+  return fetchApi<PaginatedResponse<GiftProject>>(
+    `/api/v1/gift-projects?limit=${limit}&offset=${offset}`,
+    {
+      method: "GET",
+      token,
+    }
+  );
 }
 
 export async function createGiftProject(
@@ -195,9 +238,8 @@ export async function createGiftProject(
     occasion: string;
     occasion_date?: string | null;
     budget_min?: number | null;
-    budget_max?: number | null;
+    budget_max: number;
     currency?: string;
-    notes?: string | null;
   }
 ): Promise<GiftProject> {
   return fetchApi<GiftProject>("/api/v1/gift-projects", {

@@ -43,7 +43,9 @@ async def test_app(test_settings: Settings) -> AsyncGenerator[FastAPI, None]:
             # Clean tables so each test starts with a clean database state
             if not test_settings.DATABASE_URL.startswith("sqlite"):
                 await conn.execute(
-                    text("TRUNCATE TABLE gift_projects, recipients, refresh_tokens, users CASCADE")
+                    text(
+                        "TRUNCATE TABLE gift_recommendations, gift_recommendation_generations, gift_projects, recipients, refresh_tokens, users CASCADE"
+                    )
                 )
             else:
                 for table in reversed(Base.metadata.sorted_tables):

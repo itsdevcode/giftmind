@@ -99,6 +99,11 @@ class Settings(BaseSettings):
                     f"JWT_SECRET_KEY must be at least 32 characters long in production (current length: {len(val)})."
                 )
 
+            if self.AI_PROVIDER == "mock":
+                raise ValueError(
+                    "AI_PROVIDER='mock' is not allowed in production. Configure a real inference provider (e.g. 'ollama')."
+                )
+
         return self
 
 

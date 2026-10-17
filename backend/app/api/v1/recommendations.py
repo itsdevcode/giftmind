@@ -1,5 +1,6 @@
 import logging
 import uuid
+from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -51,12 +52,15 @@ async def generate_recommendations(
     settings: Annotated[Settings, Depends(get_current_settings)],
 ) -> GiftRecommendationGenerationRead:
     """Generate exactly 3 personalized, budget-aware gift recommendations using AI for an owned project."""
-    # 1. Enforce project ownership
+    # 1. Enforce project ownership and acquire row-level lock on the project
+    # This guarantees that simultaneous generation requests for the same gift project cannot race
     project_res = await db.execute(
-        select(GiftProject).where(
+        select(GiftProject)
+        .where(
             GiftProject.id == project_id,
             GiftProject.user_id == current_user.id,
         )
+        .with_for_update()
     )
     project = project_res.scalar_one_or_none()
     if project is None:
@@ -65,18 +69,33 @@ async def generate_recommendations(
             detail="Gift project not found.",
         )
 
-    # 2. Check for active pending generation to prevent concurrent duplicates
+    # 2. Check for active pending generation; recover stale/abandoned ones (> 2 minutes old)
     active_gen_res = await db.execute(
         select(GiftRecommendationGeneration).where(
             GiftRecommendationGeneration.gift_project_id == project_id,
             GiftRecommendationGeneration.status == RecommendationGenerationStatus.pending,
         )
     )
-    if active_gen_res.scalar_one_or_none() is not None:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="A recommendation generation is currently in progress for this gift project.",
+    active_gen = active_gen_res.scalar_one_or_none()
+    if active_gen is not None:
+        # Check staleness: if pending for longer than timeout + 30s buffer, recover it
+        stale_threshold = datetime.now(UTC) - timedelta(
+            seconds=settings.AI_REQUEST_TIMEOUT_SECONDS + 30.0
         )
+        if active_gen.created_at < stale_threshold:
+            logger.warning(
+                "Marking stale pending generation %s as failed (created %s)",
+                active_gen.id,
+                active_gen.created_at,
+            )
+            active_gen.status = RecommendationGenerationStatus.failed
+            active_gen.error_message = "Generation timed out or was abandoned by client."
+            await db.commit()
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="A recommendation generation is currently in progress for this gift project.",
+            )
 
     # 3. Retrieve recipient details
     recipient_res = await db.execute(
@@ -133,23 +152,34 @@ async def generate_recommendations(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=generation.error_message,
         ) from None
-    except (AIProviderUnavailableError, AIInferenceTimeoutError) as err:
-        logger.warning("AI provider unavailable/timeout: %s", type(err).__name__)
+    except AIInferenceTimeoutError as err:
+        logger.warning("AI inference timeout: %s", err.message)
         generation.status = RecommendationGenerationStatus.failed
-        generation.error_message = err.message
+        generation.error_message = "The AI inference request timed out."
         await db.commit()
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=err.message,
+            detail="The AI inference request timed out. Please try again.",
+        ) from None
+    except AIProviderUnavailableError as err:
+        logger.warning("AI provider unavailable: %s", err.message)
+        generation.status = RecommendationGenerationStatus.failed
+        generation.error_message = "The AI inference service is temporarily unavailable."
+        await db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="The AI inference service is temporarily unavailable. Please try again shortly.",
         ) from None
     except (AIResponseValidationError, AIProviderError) as err:
-        logger.warning("AI validation/provider failure: %s", str(err))
+        logger.warning("AI validation/provider failure: %s", type(err).__name__)
         generation.status = RecommendationGenerationStatus.failed
-        generation.error_message = err.message
+        generation.error_message = (
+            "The AI service returned an invalid or malformed recommendation output."
+        )
         await db.commit()
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=err.message,
+            detail="The AI service returned an invalid or malformed output. Please try again.",
         ) from None
     except Exception as err:
         logger.error("Unexpected error during AI generation: %s", type(err).__name__)
@@ -163,7 +193,28 @@ async def generate_recommendations(
             detail="An error occurred while generating gift recommendations. Please try again.",
         ) from None
 
-    # 7. Persist exactly 3 recommendations atomically
+    # 7. Validate budget bounds on generated recommendations before committing
+    for idea in raw_output.recommendations:
+        if idea.estimated_budget < project.budget_min or idea.estimated_budget > project.budget_max:
+            logger.warning(
+                "Recommendation '%s' budget %.2f violates project budget [%.2f, %.2f]",
+                idea.title,
+                idea.estimated_budget,
+                project.budget_min,
+                project.budget_max,
+            )
+            generation.status = RecommendationGenerationStatus.failed
+            generation.error_message = (
+                f"Generated gift idea '{idea.title}' budget (${idea.estimated_budget}) "
+                f"exceeds project boundaries [${project.budget_min}, ${project.budget_max}]."
+            )
+            await db.commit()
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="The AI model generated an idea outside the specified budget constraints. Please retry.",
+            )
+
+    # 8. Persist exactly 3 recommendations atomically
     db_recommendations = [
         GiftRecommendation(
             generation_id=generation.id,

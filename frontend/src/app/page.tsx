@@ -1,10 +1,12 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   checkBackendHealth,
   loginUser,
   registerUser,
+  refreshAuth,
+  logoutUser,
   getRecipients,
   createRecipient,
   getGiftProjects,
@@ -23,16 +25,17 @@ export default function HomePage() {
   const [health, setHealth] = useState<HealthCheckResponse | null>(null);
   const [healthStatus, setHealthStatus] = useState<"checking" | "connected" | "disconnected">("checking");
 
-  // Auth state
+  // Auth state (refresh tokens remain strictly in HttpOnly cookies, never in localStorage/sessionStorage)
   const [token, setToken] = useState<string | null>(null);
   const [csrfToken, setCsrfToken] = useState<string | null>(null);
   const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [authLoadingInitial, setAuthLoadingInitial] = useState(true);
   const [authMode, setAuthMode] = useState<"login" | "register">("register");
   const [authName, setAuthName] = useState("");
   const [authEmail, setAuthEmail] = useState("");
   const [authPassword, setAuthPassword] = useState("");
   const [authError, setAuthError] = useState<string | null>(null);
-  const [authLoading, setAuthLoading] = useState(false);
+  const [authSubmitting, setAuthSubmitting] = useState(false);
 
   // Recipients state
   const [recipients, setRecipients] = useState<Recipient[]>([]);
@@ -50,7 +53,6 @@ export default function HomePage() {
   const [newProjOccasion, setNewProjOccasion] = useState("");
   const [newProjBudgetMin, setNewProjBudgetMin] = useState<string>("30");
   const [newProjBudgetMax, setNewProjBudgetMax] = useState<string>("100");
-  const [newProjNotes, setNewProjNotes] = useState("");
   const [projLoading, setProjLoading] = useState(false);
 
   // Recommendations state
@@ -58,7 +60,39 @@ export default function HomePage() {
   const [generating, setGenerating] = useState(false);
   const [generationError, setGenerationError] = useState<string | null>(null);
 
-  // Check health on mount
+  // Helper to extract CSRF cookie from document.cookie if available
+  const getCsrfCookie = (): string | null => {
+    if (typeof document === "undefined") return null;
+    const match = document.cookie.match(/(?:^|;\s*)giftmind_csrf_token=([^;]+)/);
+    return match ? decodeURIComponent(match[1]) : null;
+  };
+
+  // Attempt silent session refresh on reload using HttpOnly cookie and CSRF cookie
+  useEffect(() => {
+    let isMounted = true;
+    const existingCsrf = getCsrfCookie();
+
+    refreshAuth(existingCsrf)
+      .then((data) => {
+        if (isMounted) {
+          setToken(data.access_token);
+          setCsrfToken(data.csrf_token);
+          setCurrentUser(data.user);
+        }
+      })
+      .catch(() => {
+        // Not authenticated or expired refresh token; user will see sign-in form
+      })
+      .finally(() => {
+        if (isMounted) setAuthLoadingInitial(false);
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  // Check backend health on mount
   useEffect(() => {
     let isMounted = true;
     checkBackendHealth()
@@ -76,7 +110,35 @@ export default function HomePage() {
     };
   }, []);
 
-  // Fetch recipients & projects when user logs in
+  // Fetch recipients & projects whenever access token changes
+  const loadWorkspaceData = useCallback((authToken: string) => {
+    Promise.all([getRecipients(authToken, 50, 0), getGiftProjects(authToken, 50, 0)])
+      .then(([recData, projData]) => {
+        const recList = recData.items || [];
+        const projList = projData.items || [];
+        setRecipients(recList);
+        setSelectedRecipientId((prev) => (!prev && recList.length > 0 ? recList[0].id : prev));
+        setProjects(projList);
+        setSelectedProjectId((prev) => (!prev && projList.length > 0 ? projList[0].id : prev));
+      })
+      .catch((err: unknown) => {
+        // If access token expired, try transparent refresh
+        if (err && typeof err === "object" && "status" in err && (err as { status: number }).status === 401) {
+          refreshAuth(csrfToken)
+            .then((fresh) => {
+              setToken(fresh.access_token);
+              setCsrfToken(fresh.csrf_token);
+              setCurrentUser(fresh.user);
+            })
+            .catch(() => {
+              // Complete session expiration
+              setToken(null);
+              setCurrentUser(null);
+            });
+        }
+      });
+  }, [csrfToken]);
+
   useEffect(() => {
     if (!token) {
       setRecipients([]);
@@ -86,18 +148,10 @@ export default function HomePage() {
       setLatestGeneration(null);
       return;
     }
+    loadWorkspaceData(token);
+  }, [token, loadWorkspaceData]);
 
-    Promise.all([getRecipients(token), getGiftProjects(token)])
-      .then(([recList, projList]) => {
-        setRecipients(recList);
-        setSelectedRecipientId((prev) => (!prev && recList.length > 0 ? recList[0].id : prev));
-        setProjects(projList);
-        setSelectedProjectId((prev) => (!prev && projList.length > 0 ? projList[0].id : prev));
-      })
-      .catch(() => {});
-  }, [token]);
-
-  // Load recommendations whenever selected project changes
+  // Load latest recommendation whenever selected project changes
   useEffect(() => {
     if (!token || !selectedProjectId) {
       setLatestGeneration(null);
@@ -112,23 +166,19 @@ export default function HomePage() {
   const handleAuthSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setAuthError(null);
-    setAuthLoading(true);
+    setAuthSubmitting(true);
 
     try {
       if (authMode === "register") {
-        await registerUser({
+        // POST /api/v1/auth/register returns TokenResponse directly (no duplicate login call needed)
+        const regData = await registerUser({
           name: authName,
           email: authEmail,
           password: authPassword,
         });
-        // Automatically login after registration
-        const loginData = await loginUser({
-          email: authEmail,
-          password: authPassword,
-        });
-        setToken(loginData.access_token);
-        setCsrfToken(loginData.csrf_token);
-        setCurrentUser(loginData.user);
+        setToken(regData.access_token);
+        setCsrfToken(regData.csrf_token);
+        setCurrentUser(regData.user);
       } else {
         const loginData = await loginUser({
           email: authEmail,
@@ -142,7 +192,26 @@ export default function HomePage() {
       const msg = err instanceof Error ? err.message : "Authentication failed";
       setAuthError(msg);
     } finally {
-      setAuthLoading(false);
+      setAuthSubmitting(false);
+    }
+  };
+
+  const handleLogout = async () => {
+    try {
+      await logoutUser(csrfToken);
+    } catch {
+      // Ignore network errors on logout
+    } finally {
+      // Completely wipe client memory and sensitive state
+      setToken(null);
+      setCsrfToken(null);
+      setCurrentUser(null);
+      setRecipients([]);
+      setProjects([]);
+      setSelectedRecipientId("");
+      setSelectedProjectId("");
+      setLatestGeneration(null);
+      setAuthError(null);
     }
   };
 
@@ -150,12 +219,19 @@ export default function HomePage() {
     e.preventDefault();
     if (!token || !csrfToken) return;
     setRecLoading(true);
+
+    // Normalize comma-separated interests into a validated list[str]
+    const normalizedInterests = newRecInterests
+      .split(",")
+      .map((item) => item.trim())
+      .filter((item) => item.length > 0);
+
     try {
       const rec = await createRecipient(token, csrfToken, {
-        name: newRecName,
-        relationship: newRecRel,
-        interests: newRecInterests || undefined,
-        notes: newRecNotes || undefined,
+        name: newRecName.trim(),
+        relationship: newRecRel.trim(),
+        interests: normalizedInterests.length > 0 ? normalizedInterests : undefined,
+        notes: newRecNotes.trim() ? newRecNotes.trim() : undefined,
       });
       setRecipients((prev) => [rec, ...prev]);
       setSelectedRecipientId(rec.id);
@@ -174,21 +250,29 @@ export default function HomePage() {
     e.preventDefault();
     if (!token || !csrfToken || !selectedRecipientId) return;
     setProjLoading(true);
+
+    const minBudget = newProjBudgetMin ? parseFloat(newProjBudgetMin) : 0;
+    const maxBudget = parseFloat(newProjBudgetMax);
+
+    if (isNaN(maxBudget) || maxBudget < minBudget) {
+      alert("Maximum budget must be a valid number greater than or equal to minimum budget.");
+      setProjLoading(false);
+      return;
+    }
+
     try {
       const proj = await createGiftProject(token, csrfToken, {
         recipient_id: selectedRecipientId,
-        title: newProjTitle,
-        occasion: newProjOccasion,
-        budget_min: newProjBudgetMin ? parseFloat(newProjBudgetMin) : null,
-        budget_max: newProjBudgetMax ? parseFloat(newProjBudgetMax) : null,
+        title: newProjTitle.trim(),
+        occasion: newProjOccasion.trim(),
+        budget_min: minBudget,
+        budget_max: maxBudget,
         currency: "USD",
-        notes: newProjNotes || undefined,
       });
       setProjects((prev) => [proj, ...prev]);
       setSelectedProjectId(proj.id);
       setNewProjTitle("");
       setNewProjOccasion("");
-      setNewProjNotes("");
     } catch (err: unknown) {
       alert(err instanceof Error ? err.message : "Failed to create gift project");
     } finally {
@@ -215,7 +299,7 @@ export default function HomePage() {
   return (
     <div className="flex-1 flex flex-col justify-between">
       {/* Top Hero Banner */}
-      <section className="relative overflow-hidden pt-12 pb-16 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto w-full text-center">
+      <section className="relative overflow-hidden pt-12 pb-14 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto w-full text-center">
         <div
           aria-hidden="true"
           className="pointer-events-none absolute left-1/2 -top-40 -translate-x-1/2 transform-gpu overflow-hidden blur-3xl"
@@ -238,7 +322,7 @@ export default function HomePage() {
         </p>
         <p className="max-w-2xl mx-auto text-sm sm:text-base text-slate-300 leading-relaxed mb-6">
           Personalized, budget-conscious gift ideas generated with local LLM inference.
-          No third-party trackers, no merchant affiliate affiliate links, complete privacy.
+          No third-party trackers, no merchant affiliate links, complete data privacy.
         </p>
 
         {/* System Health Status */}
@@ -263,9 +347,13 @@ export default function HomePage() {
         </div>
       </section>
 
-      {/* Main App Workspace */}
+      {/* Main Workspace Area */}
       <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pb-20 w-full">
-        {!currentUser ? (
+        {authLoadingInitial ? (
+          <div className="flex items-center justify-center p-12">
+            <div className="w-8 h-8 border-2 border-purple-500 border-t-transparent rounded-full animate-spin"></div>
+          </div>
+        ) : !currentUser ? (
           /* Authentication Card */
           <div className="max-w-md mx-auto p-8 rounded-2xl border border-white/10 bg-slate-900/60 backdrop-blur-md shadow-2xl">
             <div className="flex items-center justify-between border-b border-white/10 pb-4 mb-6">
@@ -274,6 +362,7 @@ export default function HomePage() {
               </h2>
               <button
                 type="button"
+                id="toggle-auth-mode"
                 onClick={() => {
                   setAuthMode(authMode === "register" ? "login" : "register");
                   setAuthError(null);
@@ -285,7 +374,7 @@ export default function HomePage() {
             </div>
 
             {authError && (
-              <div className="mb-4 p-3 rounded-lg bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs">
+              <div id="auth-error-message" className="mb-4 p-3 rounded-lg bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs">
                 {authError}
               </div>
             )}
@@ -297,6 +386,7 @@ export default function HomePage() {
                     Your Name
                   </label>
                   <input
+                    id="input-name"
                     type="text"
                     required
                     value={authName}
@@ -311,6 +401,7 @@ export default function HomePage() {
                   Email Address
                 </label>
                 <input
+                  id="input-email"
                   type="email"
                   required
                   value={authEmail}
@@ -324,6 +415,7 @@ export default function HomePage() {
                   Password
                 </label>
                 <input
+                  id="input-password"
                   type="password"
                   required
                   value={authPassword}
@@ -334,59 +426,58 @@ export default function HomePage() {
               </div>
 
               <button
+                id="submit-auth-button"
                 type="submit"
-                disabled={authLoading}
+                disabled={authSubmitting}
                 className="w-full py-3 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-medium text-sm transition-all shadow-lg shadow-purple-600/30 disabled:opacity-50"
               >
-                {authLoading ? "Processing..." : authMode === "register" ? "Sign Up & Continue" : "Sign In"}
+                {authSubmitting ? "Processing..." : authMode === "register" ? "Sign Up & Continue" : "Sign In"}
               </button>
             </form>
           </div>
         ) : (
           /* Authenticated Dashboard */
           <div className="space-y-8">
-            {/* User Bar */}
+            {/* Top User Bar */}
             <div className="flex items-center justify-between p-4 rounded-xl border border-white/10 bg-slate-900/40">
               <div className="flex items-center gap-3">
                 <div className="w-9 h-9 rounded-full bg-purple-600/20 border border-purple-500/40 flex items-center justify-center text-purple-300 font-bold text-sm">
                   {currentUser.name.charAt(0).toUpperCase()}
                 </div>
                 <div>
-                  <div className="text-sm font-semibold text-white">{currentUser.name}</div>
+                  <div id="user-display-name" className="text-sm font-semibold text-white">{currentUser.name}</div>
                   <div className="text-xs text-slate-400">{currentUser.email}</div>
                 </div>
               </div>
               <button
+                id="sign-out-button"
                 type="button"
-                onClick={() => {
-                  setToken(null);
-                  setCsrfToken(null);
-                  setCurrentUser(null);
-                }}
-                className="px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-xs text-slate-300 transition-colors"
+                onClick={handleLogout}
+                className="px-3.5 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-xs text-slate-300 transition-colors"
               >
                 Sign Out
               </button>
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-              {/* Column 1: Recipient Manager */}
+              {/* Column 1: Recipient Profile */}
               <div className="p-6 rounded-2xl border border-white/10 bg-slate-900/50 space-y-6">
                 <div>
                   <h3 className="text-base font-bold text-white flex items-center gap-2">
                     <span>👥</span> 1. Recipient Profile
                   </h3>
                   <p className="text-xs text-slate-400 mt-1">
-                    Who are you getting a gift for?
+                    Who are you finding a gift for?
                   </p>
                 </div>
 
                 {recipients.length > 0 && (
                   <div>
                     <label className="block text-xs font-semibold text-slate-300 mb-1">
-                      Select Recipient
+                      Active Recipient
                     </label>
                     <select
+                      id="select-recipient"
                       value={selectedRecipientId}
                       onChange={(e) => setSelectedRecipientId(e.target.value)}
                       className="w-full px-3 py-2 rounded-lg bg-slate-950 border border-white/10 text-white text-sm focus:outline-none focus:border-purple-500"
@@ -406,9 +497,10 @@ export default function HomePage() {
                   </div>
                   <div>
                     <input
+                      id="recipient-name-input"
                       type="text"
                       required
-                      placeholder="Name (e.g. Maya)"
+                      placeholder="Name (e.g. Maya Lin)"
                       value={newRecName}
                       onChange={(e) => setNewRecName(e.target.value)}
                       className="w-full px-3 py-2 rounded-lg bg-slate-950/60 border border-white/10 text-white placeholder-slate-500 text-xs focus:outline-none focus:border-purple-500"
@@ -416,9 +508,10 @@ export default function HomePage() {
                   </div>
                   <div>
                     <input
+                      id="recipient-relationship-input"
                       type="text"
                       required
-                      placeholder="Relationship (e.g. Best Friend, Sister)"
+                      placeholder="Relationship (e.g. Close Friend, Sister)"
                       value={newRecRel}
                       onChange={(e) => setNewRecRel(e.target.value)}
                       className="w-full px-3 py-2 rounded-lg bg-slate-950/60 border border-white/10 text-white placeholder-slate-500 text-xs focus:outline-none focus:border-purple-500"
@@ -426,8 +519,9 @@ export default function HomePage() {
                   </div>
                   <div>
                     <input
+                      id="recipient-interests-input"
                       type="text"
-                      placeholder="Interests (e.g. photography, pour-over coffee)"
+                      placeholder="Interests (comma-separated, e.g. coffee, analog photography)"
                       value={newRecInterests}
                       onChange={(e) => setNewRecInterests(e.target.value)}
                       className="w-full px-3 py-2 rounded-lg bg-slate-950/60 border border-white/10 text-white placeholder-slate-500 text-xs focus:outline-none focus:border-purple-500"
@@ -435,6 +529,7 @@ export default function HomePage() {
                   </div>
                   <div>
                     <textarea
+                      id="recipient-notes-input"
                       rows={2}
                       placeholder="Personal notes & quirks..."
                       value={newRecNotes}
@@ -443,6 +538,7 @@ export default function HomePage() {
                     />
                   </div>
                   <button
+                    id="submit-recipient-button"
                     type="submit"
                     disabled={recLoading}
                     className="w-full py-2 rounded-lg bg-purple-600/80 hover:bg-purple-600 text-white text-xs font-medium transition-colors disabled:opacity-50"
@@ -452,23 +548,24 @@ export default function HomePage() {
                 </form>
               </div>
 
-              {/* Column 2: Gift Project Details */}
+              {/* Column 2: Gift Project Setup */}
               <div className="p-6 rounded-2xl border border-white/10 bg-slate-900/50 space-y-6">
                 <div>
                   <h3 className="text-base font-bold text-white flex items-center gap-2">
                     <span>🎁</span> 2. Gift Project
                   </h3>
                   <p className="text-xs text-slate-400 mt-1">
-                    Set the occasion, budget constraints, and context.
+                    Set the occasion, budget constraints, and parameters.
                   </p>
                 </div>
 
                 {projects.length > 0 && (
                   <div>
                     <label className="block text-xs font-semibold text-slate-300 mb-1">
-                      Select Project
+                      Active Project
                     </label>
                     <select
+                      id="select-project"
                       value={selectedProjectId}
                       onChange={(e) => setSelectedProjectId(e.target.value)}
                       className="w-full px-3 py-2 rounded-lg bg-slate-950 border border-white/10 text-white text-sm focus:outline-none focus:border-purple-500"
@@ -488,6 +585,7 @@ export default function HomePage() {
                   </div>
                   <div>
                     <input
+                      id="project-title-input"
                       type="text"
                       required
                       placeholder="Project Title (e.g. Maya's 30th Birthday)"
@@ -498,9 +596,10 @@ export default function HomePage() {
                   </div>
                   <div>
                     <input
+                      id="project-occasion-input"
                       type="text"
                       required
-                      placeholder="Occasion (e.g. Birthday, Housewarming)"
+                      placeholder="Occasion (e.g. 30th Birthday, Housewarming)"
                       value={newProjOccasion}
                       onChange={(e) => setNewProjOccasion(e.target.value)}
                       className="w-full px-3 py-2 rounded-lg bg-slate-950/60 border border-white/10 text-white placeholder-slate-500 text-xs focus:outline-none focus:border-purple-500"
@@ -510,6 +609,7 @@ export default function HomePage() {
                     <div>
                       <label className="block text-[10px] text-slate-400 uppercase mb-0.5">Min ($)</label>
                       <input
+                        id="project-budget-min"
                         type="number"
                         min="0"
                         placeholder="30"
@@ -521,8 +621,10 @@ export default function HomePage() {
                     <div>
                       <label className="block text-[10px] text-slate-400 uppercase mb-0.5">Max ($)</label>
                       <input
+                        id="project-budget-max"
                         type="number"
                         min="0"
+                        required
                         placeholder="120"
                         value={newProjBudgetMax}
                         onChange={(e) => setNewProjBudgetMax(e.target.value)}
@@ -530,16 +632,8 @@ export default function HomePage() {
                       />
                     </div>
                   </div>
-                  <div>
-                    <textarea
-                      rows={2}
-                      placeholder="Any specific wishes or constraints..."
-                      value={newProjNotes}
-                      onChange={(e) => setNewProjNotes(e.target.value)}
-                      className="w-full px-3 py-2 rounded-lg bg-slate-950/60 border border-white/10 text-white placeholder-slate-500 text-xs focus:outline-none focus:border-purple-500"
-                    />
-                  </div>
                   <button
+                    id="submit-project-button"
                     type="submit"
                     disabled={projLoading || !selectedRecipientId}
                     className="w-full py-2 rounded-lg bg-indigo-600/80 hover:bg-indigo-600 text-white text-xs font-medium transition-colors disabled:opacity-50"
@@ -549,7 +643,7 @@ export default function HomePage() {
                 </form>
               </div>
 
-              {/* Column 3: AI Inference Trigger & Model Info */}
+              {/* Column 3: AI Inference Engine Trigger */}
               <div className="p-6 rounded-2xl border border-purple-500/30 bg-purple-950/20 flex flex-col justify-between space-y-6">
                 <div>
                   <div className="inline-flex items-center gap-1.5 text-xs font-semibold text-purple-400 mb-2 uppercase tracking-wider">
@@ -560,7 +654,7 @@ export default function HomePage() {
                   </h3>
                   <p className="text-xs text-slate-300 leading-relaxed">
                     Our prompt synthesis engine takes recipient interests, memories, and budget constraints
-                    and feeds them into local Gemma 2 2B with strict JSON grammar enforcement.
+                    and feeds them into local Gemma 2 with strict JSON grammar and budget validation.
                   </p>
                 </div>
 
@@ -571,7 +665,7 @@ export default function HomePage() {
                   </div>
                   <div className="flex justify-between text-slate-400">
                     <span>Output Schema:</span>
-                    <span className="font-mono text-slate-300">3 Distinct Ideas + Budget</span>
+                    <span className="font-mono text-slate-300">3 Distinct Ideas + Budget Validation</span>
                   </div>
                   <div className="flex justify-between text-slate-400">
                     <span>Privacy:</span>
@@ -580,7 +674,7 @@ export default function HomePage() {
                 </div>
 
                 {generationError && (
-                  <div className="p-3 rounded-lg bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs">
+                  <div id="generation-error-message" className="p-3 rounded-lg bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs">
                     {generationError}
                   </div>
                 )}
@@ -608,14 +702,14 @@ export default function HomePage() {
 
             {/* Recommendations Display */}
             {latestGeneration && (
-              <div className="pt-8 border-t border-white/10 space-y-6">
+              <div id="recommendations-container" className="pt-8 border-t border-white/10 space-y-6">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                   <div>
                     <h2 className="text-2xl font-bold text-white tracking-tight flex items-center gap-2.5">
                       <span>🎯</span> AI-Curated Gift Recommendations
                     </h2>
                     <p className="text-xs text-slate-400 mt-1 font-mono">
-                      Engine: {latestGeneration.provider} ({latestGeneration.model}) • Prompt {latestGeneration.prompt_version} • Generated {new Date(latestGeneration.created_at).toLocaleTimeString()}
+                      Engine: {latestGeneration.provider} ({latestGeneration.model}) • Status: {latestGeneration.status} • Prompt {latestGeneration.prompt_version} • Generated {new Date(latestGeneration.created_at).toLocaleTimeString()}
                     </p>
                   </div>
                   <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-xs font-semibold">
@@ -627,6 +721,7 @@ export default function HomePage() {
                   {latestGeneration.recommendations.map((rec, idx) => (
                     <div
                       key={rec.id}
+                      data-recommendation-card
                       className="p-6 rounded-2xl border border-white/10 bg-gradient-to-b from-slate-900/80 to-slate-950/80 hover:border-purple-500/40 transition-all flex flex-col justify-between space-y-4 shadow-xl"
                     >
                       <div className="space-y-3">
@@ -646,6 +741,12 @@ export default function HomePage() {
                         <div className="inline-block px-3 py-1 rounded-lg bg-emerald-950/40 border border-emerald-500/30 text-emerald-300 text-sm font-semibold font-mono">
                           ~ ${parseFloat(rec.estimated_budget).toFixed(2)} {rec.currency}
                         </div>
+
+                        {rec.description && (
+                          <p className="text-xs text-slate-300 leading-relaxed font-normal">
+                            {rec.description}
+                          </p>
+                        )}
 
                         <div className="space-y-1.5 pt-2">
                           <div className="text-[11px] uppercase tracking-wider text-slate-400 font-semibold">
