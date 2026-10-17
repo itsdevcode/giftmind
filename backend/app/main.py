@@ -52,10 +52,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.settings = settings
 
     # CORS configuration
-    if settings.CORS_ORIGINS:
+    if settings.cors_origins_list:
         app.add_middleware(
             CORSMiddleware,
-            allow_origins=settings.CORS_ORIGINS,
+            allow_origins=settings.cors_origins_list,
             allow_credentials=True,
             allow_methods=["*"],
             allow_headers=["*"],

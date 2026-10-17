@@ -244,3 +244,5 @@ Thumbs.db
 .vscode/
 .idea/
 frontend/tsconfig.tsbuildinfo
+.pg_data/
+backend/.pg_data/
