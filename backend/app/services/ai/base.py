@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 
 from app.schemas.recommendation import RawGiftRecommendationOutput
+from app.schemas.story import RawStoryOutput, StoryPromptInput
 from app.services.ai.prompts import RecommendationPromptInput
 
 
@@ -24,7 +25,15 @@ class AIProvider(ABC):
         self,
         prompt_input: RecommendationPromptInput,
     ) -> RawGiftRecommendationOutput:
-        """Invoke the LLM to generate exactly 3 validated personalized gift recommendations.
+        """Invoke the LLM to generate exactly 3 validated personalized gift recommendations."""
+        pass
+
+    @abstractmethod
+    async def generate_story_keepsake(
+        self,
+        prompt_input: StoryPromptInput,
+    ) -> RawStoryOutput:
+        """Invoke the LLM to generate a personalized biographical story keepsake.
 
         Raises:
             AIProviderUnavailableError: When connection to the inference backend fails.

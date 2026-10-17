@@ -9,6 +9,7 @@ from google.genai import errors, types
 from pydantic import ValidationError
 
 from app.schemas.recommendation import RawGiftRecommendationOutput
+from app.schemas.story import RawStoryOutput, StoryPromptInput
 from app.services.ai.base import AIProvider
 from app.services.ai.exceptions import (
     AIAuthenticationError,
@@ -23,6 +24,10 @@ from app.services.ai.prompts import (
     SYSTEM_PROMPT,
     RecommendationPromptInput,
     build_recommendation_prompt,
+)
+from app.services.ai.story_prompts import (
+    STORY_SYSTEM_PROMPT,
+    build_story_prompt,
 )
 
 logger = logging.getLogger(__name__)
@@ -284,6 +289,165 @@ class GoogleGemmaAIProvider(AIProvider):
 
             except Exception as exc:
                 logger.error("Unexpected error in hosted Gemma provider: %s", type(exc).__name__)
+                raise AIProviderError(
+                    f"Unexpected AI provider error: {type(exc).__name__}"
+                ) from exc
+
+        raise AIProviderUnavailableError(
+            "Exhausted retries while communicating with Google AI service."
+        )
+
+    async def generate_story_keepsake(
+        self,
+        prompt_input: StoryPromptInput,
+    ) -> RawStoryOutput:
+        """Call hosted Gemma model to generate a structured personalized narrative keepsake."""
+        if not self._api_key and self._client is None:
+            raise AIAuthenticationError(
+                "GOOGLE_API_KEY is missing. Please configure a valid API key to use hosted Gemma."
+            )
+
+        client = self._get_client()
+        prompt = build_story_prompt(prompt_input)
+
+        config = types.GenerateContentConfig(
+            system_instruction=STORY_SYSTEM_PROMPT,
+            temperature=0.75,
+            top_p=0.95,
+            response_mime_type="application/json",
+        )
+
+        max_retries = 2
+        base_backoff = 1.0
+
+        for attempt in range(max_retries + 1):
+            try:
+                logger.info(
+                    "Initiating hosted Gemma story generation for model '%s' (attempt %d/%d)",
+                    self._model,
+                    attempt + 1,
+                    max_retries + 1,
+                )
+
+                async with asyncio.timeout(self._timeout_seconds):
+                    response = await client.aio.models.generate_content(
+                        model=self._model,
+                        contents=prompt,
+                        config=config,
+                    )
+
+                raw_text = (response.text or "").strip()
+                if not raw_text:
+                    raise AIResponseValidationError(
+                        "Hosted Gemma returned an empty story response."
+                    )
+
+                json_text = _extract_json_block(raw_text)
+
+                try:
+                    parsed_data = json.loads(json_text)
+                except json.JSONDecodeError as err:
+                    logger.warning("Failed to parse hosted Gemma story output as JSON: %s", err)
+                    raise AIResponseValidationError(
+                        "The model story output could not be parsed as JSON."
+                    ) from err
+
+                try:
+                    validated_output = RawStoryOutput.model_validate(parsed_data)
+                    return validated_output
+                except ValidationError as val_err:
+                    logger.warning("Story output failed schema validation: %s", val_err)
+                    first_err = val_err.errors()[0]["msg"] if val_err.errors() else str(val_err)
+                    raise AIResponseValidationError(
+                        f"The model story output did not match the expected schema: {first_err}"
+                    ) from val_err
+
+            except TimeoutError as err:
+                logger.error(
+                    "Hosted Gemma story inference request timed out after %.1fs",
+                    self._timeout_seconds,
+                )
+                raise AIInferenceTimeoutError(
+                    f"AI story inference request timed out after {self._timeout_seconds}s."
+                ) from err
+
+            except errors.APIError as exc:
+                code = getattr(exc, "code", None)
+                msg = getattr(exc, "message", str(exc))
+
+                if code in (401, 403):
+                    logger.error("Hosted Gemma authentication failed: HTTP %s", code)
+                    raise AIAuthenticationError(
+                        "Google API authentication failed. Verify that GOOGLE_API_KEY is valid."
+                    ) from exc
+
+                if code == 404:
+                    logger.error("Hosted Gemma model '%s' not found: HTTP 404", self._model)
+                    raise AIModelNotFoundError(
+                        f"Configured model '{self._model}' was not found on Google API host."
+                    ) from exc
+
+                if code == 429:
+                    logger.warning(
+                        "Google API rate limit (429) hit on attempt %d: %s", attempt + 1, msg
+                    )
+                    retry_after = None
+                    if hasattr(exc, "response") and exc.response is not None:
+                        headers = getattr(exc.response, "headers", {})
+                        if "retry-after" in headers:
+                            try:
+                                retry_after = float(headers["retry-after"])
+                            except (ValueError, TypeError):
+                                pass
+
+                    if attempt < max_retries:
+                        backoff = (
+                            retry_after
+                            if retry_after is not None
+                            else (base_backoff * (2**attempt))
+                        )
+                        backoff = min(backoff, 8.0)
+                        logger.info(
+                            "Retrying story generation after %.1fs due to rate limit...", backoff
+                        )
+                        await asyncio.sleep(backoff)
+                        continue
+
+                    raise AIRateLimitError(
+                        "AI service rate limit exceeded. Please try again shortly.",
+                        retry_after=retry_after,
+                    ) from exc
+
+                if code in (500, 502, 503, 504):
+                    logger.warning(
+                        "Google API server error %d on attempt %d: %s", code, attempt + 1, msg
+                    )
+                    if attempt < max_retries:
+                        backoff = base_backoff * (2**attempt)
+                        logger.info(
+                            "Retrying story generation after %.1fs due to server error...", backoff
+                        )
+                        await asyncio.sleep(backoff)
+                        continue
+                    raise AIProviderUnavailableError(
+                        f"Google AI service is temporarily unavailable (status {code})."
+                    ) from exc
+
+                logger.error("Google API client error %s: %s", code, msg)
+                raise AIProviderError(f"Google AI service error: {msg}") from exc
+
+            except (
+                AIResponseValidationError,
+                AIInferenceTimeoutError,
+                AIAuthenticationError,
+                AIModelNotFoundError,
+            ):
+                raise
+
+            except Exception as exc:
+                logger.error(
+                    "Unexpected error in hosted Gemma story generation: %s", type(exc).__name__
+                )
                 raise AIProviderError(
                     f"Unexpected AI provider error: {type(exc).__name__}"
                 ) from exc

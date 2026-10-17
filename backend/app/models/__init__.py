@@ -13,6 +13,11 @@ from app.models.recommendation import (
     RecommendationGenerationStatus,
 )
 from app.models.refresh_token import RefreshToken
+from app.models.story import (
+    MemoryAnswer,
+    StoryKeepsake,
+    StoryKeepsakeStatus,
+)
 from app.models.user import User
 
 __all__ = [
@@ -25,4 +30,7 @@ __all__ = [
     "GiftRecommendationGeneration",
     "GiftRecommendation",
     "RecommendationGenerationStatus",
+    "MemoryAnswer",
+    "StoryKeepsake",
+    "StoryKeepsakeStatus",
 ]

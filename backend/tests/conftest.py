@@ -44,7 +44,7 @@ async def test_app(test_settings: Settings) -> AsyncGenerator[FastAPI, None]:
             if not test_settings.DATABASE_URL.startswith("sqlite"):
                 await conn.execute(
                     text(
-                        "TRUNCATE TABLE gift_recommendations, gift_recommendation_generations, gift_projects, recipients, refresh_tokens, users CASCADE"
+                        "TRUNCATE TABLE story_keepsakes, memory_answers, gift_recommendations, gift_recommendation_generations, gift_projects, recipients, refresh_tokens, users CASCADE"
                     )
                 )
             else:
