@@ -11,7 +11,8 @@ import { GiftRecommendationsWorkspace } from "@/components/gifts/GiftRecommendat
 import { MemoryInterview } from "@/components/story/MemoryInterview";
 import { StoryEditor } from "@/components/story/StoryEditor";
 import { AuthModal } from "@/components/auth/AuthModal";
-import { CulturalDivider, HeritageArch, MandalaAccent } from "@/components/illustrations/CulturalMotifs";
+import { Gift, BookHeart, ArrowRight, Sparkles } from "lucide-react";
+import { CulturalDivider, HeritageArch, MandalaAccent, LotusFlowerPattern } from "@/components/illustrations/CulturalMotifs";
 import {
   loginUser,
   registerUser,
@@ -523,47 +524,163 @@ export default function HomePage() {
               <div className="w-8 h-8 border-2 border-amber-500 border-t-transparent rounded-full animate-spin" />
             </div>
           ) : !currentUser ? (
-            /* Unauthenticated Visitor Landing Preview */
-            <div className="space-y-10 my-4 sm:my-8">
-              <ExperienceSelector
-                activeExperience={activeExperience}
-                onSelectExperience={(exp) => {
-                  setActiveExperience(exp);
-                  setAuthModalOpen(true);
-                }}
-              />
-
-              <div className="relative overflow-hidden p-8 sm:p-12 rounded-3xl border border-amber-500/20 bg-gradient-to-b from-[#121826]/90 via-[#0c101a]/95 to-[#090c13] max-w-2xl mx-auto text-center space-y-5 shadow-2xl shadow-black/60">
-                {/* Decorative background mandalas */}
-                <div className="pointer-events-none absolute -right-8 -bottom-8 opacity-[0.07] text-amber-400">
-                  <MandalaAccent className="w-48 h-48" />
+            /* Unified Premium Experience Showcase */
+            <div className="my-6 sm:my-10 max-w-4xl mx-auto w-full">
+              <div className="relative overflow-hidden rounded-3xl border border-amber-500/20 bg-gradient-to-b from-[#111726]/90 via-[#0b0f19]/95 to-[#070a10] p-6 sm:p-10 shadow-2xl shadow-black/80 backdrop-blur-xl">
+                {/* Decorative cultural background motifs */}
+                <div className="pointer-events-none absolute -right-12 -top-12 opacity-[0.06] text-amber-400">
+                  <MandalaAccent className="w-64 h-64" />
                 </div>
-                <div className="pointer-events-none absolute -left-8 -top-8 opacity-[0.07] text-violet-400">
-                  <MandalaAccent className="w-48 h-48" />
+                <div className="pointer-events-none absolute -left-12 -bottom-12 opacity-[0.06] text-violet-400">
+                  <MandalaAccent className="w-64 h-64" />
                 </div>
 
-                <div className="relative z-10 flex justify-center">
-                  <div className="w-12 h-12 rounded-full bg-gradient-to-tr from-amber-500/20 to-amber-300/10 border border-amber-400/30 flex items-center justify-center text-amber-300 shadow-inner">
-                    <HeritageArch className="w-5 h-5 text-amber-400" />
+                {/* Section Header */}
+                <div className="relative z-10 text-center max-w-xl mx-auto mb-8 sm:mb-10 space-y-2.5">
+                  <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-amber-500/10 border border-amber-400/25 text-[11px] font-medium text-amber-300">
+                    <LotusFlowerPattern className="w-3.5 h-3.5 text-amber-400" />
+                    <span>Two Thoughtful Ways to Gift</span>
                   </div>
-                </div>
-
-                <div className="relative z-10 space-y-2">
-                  <h3 className="text-xl sm:text-2xl font-semibold text-white tracking-tight">
-                    Ready to turn memories into a gift they&apos;ll treasure?
+                  <h3 className="text-2xl sm:text-3xl font-serif font-bold text-white tracking-tight">
+                    Choose Your Keepsake Experience
                   </h3>
-                  <p className="text-xs sm:text-sm text-slate-300/90 max-w-md mx-auto leading-relaxed">
-                    Create your free account to curate personalized Gemma 4 gift recommendations or generate an authentic keepsake story.
+                  <p className="text-xs sm:text-sm text-slate-300/80 leading-relaxed">
+                    Powered by Gemma 4 AI to craft memorable, emotionally authentic gifts and stories in minutes.
                   </p>
                 </div>
 
-                <div className="relative z-10 pt-2 flex justify-center">
+                {/* Unified Interactive 2-Card Grid */}
+                <div className="relative z-10 grid grid-cols-1 md:grid-cols-2 gap-5 mb-8">
+                  {/* Card 1: AI Gift Ideas */}
+                  <div
+                    id="card-experience-gifts"
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => {
+                      setActiveExperience("gifts");
+                      setAuthModalOpen(true);
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        setActiveExperience("gifts");
+                        setAuthModalOpen(true);
+                      }
+                    }}
+                    className={`group relative flex flex-col justify-between p-6 sm:p-7 rounded-2xl border text-left cursor-pointer transition-all duration-300 ${
+                      activeExperience === "gifts"
+                        ? "border-amber-400/50 bg-gradient-to-br from-amber-950/40 via-[#131b2e] to-[#0a0e1a] shadow-xl shadow-amber-950/30 ring-1 ring-amber-400/30"
+                        : "border-white/[0.08] bg-[#0c121e]/60 hover:border-amber-400/40 hover:bg-[#101728]/80"
+                    }`}
+                  >
+                    <div className="pointer-events-none absolute right-3 bottom-3 opacity-5 group-hover:opacity-10 text-amber-400 transition-opacity">
+                      <HeritageArch className="w-24 h-24" />
+                    </div>
+
+                    <div className="relative z-10">
+                      <div className="flex items-center justify-between gap-3 mb-4">
+                        <div className="w-11 h-11 rounded-xl bg-amber-500/15 border border-amber-400/30 flex items-center justify-center text-amber-400 group-hover:scale-105 group-hover:bg-amber-500/25 transition-all">
+                          <Gift className="w-5 h-5" />
+                        </div>
+                        <span className="px-2.5 py-0.5 rounded-full text-[10px] font-semibold tracking-wide uppercase bg-amber-400/15 text-amber-300 border border-amber-400/30">
+                          Personalized
+                        </span>
+                      </div>
+
+                      <h4 className="text-lg font-semibold text-white tracking-tight mb-2 flex items-center gap-2 group-hover:text-amber-200 transition-colors">
+                        AI Gift Recommendations
+                      </h4>
+                      <p className="text-xs sm:text-sm text-slate-300/85 leading-relaxed mb-6">
+                        Personalized gift ideas curated around their unique personality, shared moments, occasion, and your exact budget.
+                      </p>
+                    </div>
+
+                    <div className="relative z-10 pt-2 border-t border-white/[0.06] flex items-center justify-between">
+                      <span className="text-xs font-semibold text-amber-400 group-hover:text-amber-300 transition-colors flex items-center gap-1.5">
+                        Start with Gift Ideas
+                        <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform" />
+                      </span>
+                      <span className="text-[11px] text-slate-400">3 Curated Picks</span>
+                    </div>
+                  </div>
+
+                  {/* Card 2: Story Keepsake */}
+                  <div
+                    id="card-experience-story"
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => {
+                      setActiveExperience("story");
+                      setAuthModalOpen(true);
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        setActiveExperience("story");
+                        setAuthModalOpen(true);
+                      }
+                    }}
+                    className={`group relative flex flex-col justify-between p-6 sm:p-7 rounded-2xl border text-left cursor-pointer transition-all duration-300 ${
+                      activeExperience === "story"
+                        ? "border-violet-400/50 bg-gradient-to-br from-violet-950/40 via-[#131b2e] to-[#0a0e1a] shadow-xl shadow-violet-950/30 ring-1 ring-violet-400/30"
+                        : "border-white/[0.08] bg-[#0c121e]/60 hover:border-violet-400/40 hover:bg-[#101728]/80"
+                    }`}
+                  >
+                    <div className="pointer-events-none absolute right-3 bottom-3 opacity-5 group-hover:opacity-10 text-violet-400 transition-opacity">
+                      <HeritageArch className="w-24 h-24" />
+                    </div>
+
+                    <div className="relative z-10">
+                      <div className="flex items-center justify-between gap-3 mb-4">
+                        <div className="w-11 h-11 rounded-xl bg-violet-500/15 border border-violet-400/30 flex items-center justify-center text-violet-400 group-hover:scale-105 group-hover:bg-violet-500/25 transition-all">
+                          <BookHeart className="w-5 h-5" />
+                        </div>
+                        <span className="px-2.5 py-0.5 rounded-full text-[10px] font-semibold tracking-wide uppercase bg-violet-400/15 text-violet-300 border border-violet-400/30">
+                          Printable PDF
+                        </span>
+                      </div>
+
+                      <h4 className="text-lg font-semibold text-white tracking-tight mb-2 flex items-center gap-2 group-hover:text-violet-200 transition-colors">
+                        Story Keepsake
+                      </h4>
+                      <p className="text-xs sm:text-sm text-slate-300/85 leading-relaxed mb-6">
+                        Turn cherished memories into an emotional narrative story that you can edit, personalize, and download as an archival PDF.
+                      </p>
+                    </div>
+
+                    <div className="relative z-10 pt-2 border-t border-white/[0.06] flex items-center justify-between">
+                      <span className="text-xs font-semibold text-violet-400 group-hover:text-violet-300 transition-colors flex items-center gap-1.5">
+                        Create Story Keepsake
+                        <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform" />
+                      </span>
+                      <span className="text-[11px] text-slate-400">PDF Download</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Seamless Unified Action Bar */}
+                <div className="relative z-10 pt-4 border-t border-white/[0.06] flex flex-col sm:flex-row items-center justify-between gap-4 text-center sm:text-left">
+                  <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 rounded-full bg-amber-500/10 border border-amber-400/20 flex items-center justify-center text-amber-400">
+                      <Sparkles className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <p className="text-xs sm:text-sm font-medium text-white">
+                        Free to start &middot; No credit card required
+                      </p>
+                      <p className="text-[11px] text-slate-400">
+                        Join in seconds with email or demo account
+                      </p>
+                    </div>
+                  </div>
+
                   <button
                     type="button"
                     onClick={() => setAuthModalOpen(true)}
-                    className="px-8 py-3 btn-primary text-xs sm:text-sm font-semibold cursor-pointer"
+                    className="w-full sm:w-auto px-7 py-3 btn-primary text-xs sm:text-sm font-semibold cursor-pointer shadow-lg shadow-amber-500/20 hover:shadow-amber-500/30 flex items-center justify-center gap-2"
                   >
-                    Get Started Free
+                    <span>Get Started Free</span>
+                    <ArrowRight className="w-4 h-4" />
                   </button>
                 </div>
               </div>
