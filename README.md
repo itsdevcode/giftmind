@@ -2,6 +2,10 @@
 
 > **Turn Shared Memories Into Lasting Gifts.**
 
+<div align="center">
+  <img src="docs/images/giftmind_hero_banner.jpg" alt="GiftMind Platform Showcase — AI Gift Ideas & Story Keepsake" width="100%" />
+</div>
+
 An open-source AI gifting platform that curates thoughtful, budget-aware gift recommendations and transforms cherished personal memories into downloadable story keepsake PDFs.
 
 Developed for **Hacktoberfest 2026 Week 2** using production-grade software engineering standards.
@@ -19,6 +23,10 @@ Choosing gifts often defaults to impersonal gift cards or rushed online browsing
 ---
 
 ## 📸 Screenshots & Showcase
+
+<p align="center">
+  <img src="docs/images/giftmind_hero_banner.jpg" alt="GiftMind UI Overview" width="90%" />
+</p>
 
 | View | Description | Preview |
 |---|---|---|
