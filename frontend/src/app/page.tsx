@@ -524,7 +524,7 @@ export default function HomePage() {
             </div>
           ) : !currentUser ? (
             /* Unauthenticated Visitor Landing Preview */
-            <div className="space-y-8 my-6">
+            <div className="space-y-10 my-4 sm:my-8">
               <ExperienceSelector
                 activeExperience={activeExperience}
                 onSelectExperience={(exp) => {
@@ -533,32 +533,35 @@ export default function HomePage() {
                 }}
               />
 
-              <div className="relative overflow-hidden p-8 sm:p-12 saas-card max-w-2xl mx-auto text-center space-y-4 border-amber-500/20 shadow-xl shadow-black/40">
-                {/* Decorative background mandala */}
-                <div className="pointer-events-none absolute -right-6 -bottom-6 opacity-10 text-amber-400">
-                  <MandalaAccent className="w-40 h-40" />
+              <div className="relative overflow-hidden p-8 sm:p-12 rounded-3xl border border-amber-500/20 bg-gradient-to-b from-[#121826]/90 via-[#0c101a]/95 to-[#090c13] max-w-2xl mx-auto text-center space-y-5 shadow-2xl shadow-black/60">
+                {/* Decorative background mandalas */}
+                <div className="pointer-events-none absolute -right-8 -bottom-8 opacity-[0.07] text-amber-400">
+                  <MandalaAccent className="w-48 h-48" />
                 </div>
-                <div className="pointer-events-none absolute -left-6 -top-6 opacity-10 text-violet-400">
-                  <MandalaAccent className="w-40 h-40" />
+                <div className="pointer-events-none absolute -left-8 -top-8 opacity-[0.07] text-violet-400">
+                  <MandalaAccent className="w-48 h-48" />
                 </div>
 
-                <div className="relative z-10 flex justify-center mb-1">
-                  <div className="w-10 h-10 rounded-full bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400">
-                    <HeritageArch className="w-5 h-5" />
+                <div className="relative z-10 flex justify-center">
+                  <div className="w-12 h-12 rounded-full bg-gradient-to-tr from-amber-500/20 to-amber-300/10 border border-amber-400/30 flex items-center justify-center text-amber-300 shadow-inner">
+                    <HeritageArch className="w-5 h-5 text-amber-400" />
                   </div>
                 </div>
 
-                <h3 className="relative z-10 text-xl font-semibold text-white tracking-tight">
-                  Ready to turn memories into a gift they&apos;ll treasure?
-                </h3>
-                <p className="relative z-10 text-sm text-slate-300 max-w-md mx-auto leading-relaxed">
-                  Sign in or create a free account to craft personalized gift recommendations and generate heartwarming narrative keepsakes.
-                </p>
-                <div className="relative z-10 pt-3 flex justify-center">
+                <div className="relative z-10 space-y-2">
+                  <h3 className="text-xl sm:text-2xl font-semibold text-white tracking-tight">
+                    Ready to turn memories into a gift they&apos;ll treasure?
+                  </h3>
+                  <p className="text-xs sm:text-sm text-slate-300/90 max-w-md mx-auto leading-relaxed">
+                    Create your free account to curate personalized Gemma 4 gift recommendations or generate an authentic keepsake story.
+                  </p>
+                </div>
+
+                <div className="relative z-10 pt-2 flex justify-center">
                   <button
                     type="button"
                     onClick={() => setAuthModalOpen(true)}
-                    className="px-8 py-3 btn-primary text-sm font-semibold shadow-lg shadow-amber-500/20 hover:shadow-amber-500/30 cursor-pointer"
+                    className="px-8 py-3 btn-primary text-xs sm:text-sm font-semibold cursor-pointer"
                   >
                     Get Started Free
                   </button>

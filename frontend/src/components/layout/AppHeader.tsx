@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { Sparkles, Gift, BookHeart, Github, LogOut, User as UserIcon } from "lucide-react";
+import { HeritageArch } from "@/components/illustrations/CulturalMotifs";
 import type { User } from "@/lib/api";
 
 interface AppHeaderProps {
@@ -20,101 +21,106 @@ export function AppHeader({
   onOpenAuth,
 }: AppHeaderProps) {
   return (
-    <header className="sticky top-0 z-50 w-full border-b border-white/[0.08] bg-[#090c13]/85 backdrop-blur-md">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-4">
-        {/* Brand */}
+    <header className="sticky top-0 z-50 w-full border-b border-white/[0.06] bg-[#090c13]/80 backdrop-blur-xl">
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 h-15 flex items-center justify-between gap-4">
+        {/* Brand Lockup */}
         <Link
           href="/"
           id="brand-logo"
-          className="flex items-center gap-3 text-white hover:opacity-90 transition-opacity flex-shrink-0"
+          className="flex items-center gap-2.5 text-white hover:opacity-95 transition-all group flex-shrink-0"
         >
-          <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-amber-500 via-amber-400 to-violet-500 flex items-center justify-center text-slate-950 font-bold shadow-md shadow-amber-500/20">
-            <Sparkles className="w-4 h-4 text-slate-950" />
+          <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-amber-500 via-amber-400 to-violet-400 p-[1px] shadow-sm shadow-amber-500/20">
+            <div className="w-full h-full rounded-full bg-[#0b0f17] flex items-center justify-center">
+              <HeritageArch className="w-4 h-4 text-amber-400 group-hover:scale-105 transition-transform" />
+            </div>
           </div>
-          <div className="flex flex-col">
-            <span className="font-semibold tracking-tight text-sm text-white">GiftMind</span>
-            <span className="text-[11px] text-slate-400 hidden sm:inline -mt-0.5">
-              Turn Memories Into Meaningful Gifts
+          <div className="flex items-baseline gap-2">
+            <span className="font-semibold tracking-tight text-sm text-white font-sans">
+              GiftMind
+            </span>
+            <span className="hidden md:inline-block text-[11px] font-normal text-slate-400 border-l border-white/10 pl-2">
+              Meaningful Gifting &amp; Keepsakes
             </span>
           </div>
         </Link>
 
-        {/* Navigation Experiences */}
-        <nav aria-label="Main Navigation" className="hidden md:flex items-center gap-1.5 bg-white/[0.04] p-1 rounded-xl border border-white/[0.06]">
+        {/* Floating Navigation Pill Selector */}
+        <nav
+          aria-label="Experience Switcher"
+          className="hidden sm:flex items-center p-1 rounded-full bg-white/[0.03] border border-white/[0.08] shadow-inner"
+        >
           <button
             type="button"
             id="nav-experience-gifts"
             onClick={() => onSelectExperience("gifts")}
-            className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-medium transition-all ${
+            className={`flex items-center gap-1.5 px-3.5 py-1 rounded-full text-xs font-medium transition-all cursor-pointer ${
               activeExperience === "gifts"
-                ? "bg-amber-500/15 text-amber-300 border border-amber-500/30 shadow-sm"
-                : "text-slate-400 hover:text-slate-200"
+                ? "bg-amber-400/15 text-amber-300 border border-amber-400/30 shadow-sm"
+                : "text-slate-400 hover:text-slate-200 border border-transparent"
             }`}
           >
-            <Gift className="w-3.5 h-3.5" />
+            <Gift className="w-3.5 h-3.5 text-amber-400" />
             <span>AI Gift Ideas</span>
           </button>
           <button
             type="button"
             id="nav-experience-story"
             onClick={() => onSelectExperience("story")}
-            className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-medium transition-all ${
+            className={`flex items-center gap-1.5 px-3.5 py-1 rounded-full text-xs font-medium transition-all cursor-pointer ${
               activeExperience === "story"
-                ? "bg-violet-500/15 text-violet-300 border border-violet-500/30 shadow-sm"
-                : "text-slate-400 hover:text-slate-200"
+                ? "bg-violet-400/15 text-violet-300 border border-violet-400/30 shadow-sm"
+                : "text-slate-400 hover:text-slate-200 border border-transparent"
             }`}
           >
-            <BookHeart className="w-3.5 h-3.5" />
+            <BookHeart className="w-3.5 h-3.5 text-violet-400" />
             <span>Story Keepsake</span>
           </button>
         </nav>
 
-        {/* User / Actions */}
-        <div className="flex items-center gap-3">
+        {/* User / External Actions */}
+        <div className="flex items-center gap-2.5">
           <a
             href="https://github.com/itsdevcode/giftmind"
             target="_blank"
             rel="noopener noreferrer"
             id="nav-link-github"
             aria-label="View source code on GitHub"
-            className="hidden sm:inline-flex items-center gap-1.5 text-xs text-slate-400 hover:text-white px-2.5 py-1.5 rounded-lg border border-white/[0.08] hover:border-white/[0.15] bg-white/[0.03] transition-colors"
+            className="inline-flex items-center gap-1.5 text-xs text-slate-400 hover:text-white px-3 py-1.5 rounded-full border border-white/[0.08] hover:border-white/[0.18] bg-white/[0.02] hover:bg-white/[0.06] transition-all cursor-pointer"
           >
             <Github className="w-3.5 h-3.5" />
-            <span>GitHub</span>
+            <span className="hidden sm:inline">GitHub</span>
           </a>
 
           {currentUser ? (
-            <div className="flex items-center gap-2.5 pl-2 border-l border-white/[0.08]">
+            <div className="flex items-center gap-2 pl-2 border-l border-white/[0.08]">
               <div className="flex items-center gap-2 text-xs">
-                <div className="w-7 h-7 rounded-lg bg-amber-500/15 border border-amber-500/30 flex items-center justify-center text-amber-300 font-semibold">
+                <div className="w-7 h-7 rounded-full bg-amber-500/15 border border-amber-500/30 flex items-center justify-center text-amber-300 font-semibold text-xs">
                   {currentUser.name ? currentUser.name.charAt(0).toUpperCase() : "U"}
                 </div>
                 <div className="hidden lg:flex flex-col text-left">
                   <span className="font-medium text-slate-200 text-xs leading-none">
                     {currentUser.name}
                   </span>
-                  <span className="text-[10px] text-slate-400 leading-none mt-1">
-                    {currentUser.email}
-                  </span>
                 </div>
               </div>
+
               <button
                 type="button"
-                id="sign-out-button"
+                id="nav-button-logout"
                 onClick={onLogout}
-                title="Sign Out"
-                className="p-1.5 rounded-lg text-slate-400 hover:text-rose-300 hover:bg-rose-500/10 transition-colors"
+                aria-label="Sign out"
+                className="p-1.5 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 transition-colors ml-1 cursor-pointer"
+                title="Sign out"
               >
-                <LogOut className="w-4 h-4" />
-                <span className="sr-only">Sign out</span>
+                <LogOut className="w-3.5 h-3.5" />
               </button>
             </div>
           ) : (
             <button
               type="button"
-              id="header-sign-in-button"
+              id="nav-button-signin"
               onClick={onOpenAuth}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold btn-primary"
+              className="px-4 py-1.5 btn-primary text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
             >
               <UserIcon className="w-3.5 h-3.5" />
               <span>Sign In</span>

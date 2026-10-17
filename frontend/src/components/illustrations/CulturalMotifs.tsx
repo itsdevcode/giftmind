@@ -3,156 +3,190 @@
 import React from "react";
 
 /**
- * Architectural silhouette showcasing India Gate, Taj Mahal, and Lotus Temple
- * as a tasteful, editorial line-art backdrop.
- * Designed specifically for dark mode with subtle glowing amber & violet strokes.
+ * Editorial, high-fidelity Indian landmark composition:
+ * Featuring Taj Mahal, India Gate, Lotus Temple, and Qutub Minar silhouette.
+ * Rendered as an intentional, artistic visual artwork for the hero panel.
  */
-export function IndianLandmarkSilhouette({
-  className = "w-full h-auto text-amber-500/20",
+export function IndianHeritageArtwork({
+  className = "w-full h-auto",
 }: {
   className?: string;
 }) {
   return (
-    <svg
-      viewBox="0 0 1200 320"
-      fill="none"
-      xmlns="http://www.w3.org/2000/svg"
-      className={className}
-      aria-hidden="true"
-    >
-      <defs>
-        <linearGradient id="landmarkGlow" x1="0%" y1="0%" x2="100%" y2="0%">
-          <stop offset="0%" stopColor="currentColor" stopOpacity="0.05" />
-          <stop offset="25%" stopColor="currentColor" stopOpacity="0.4" />
-          <stop offset="50%" stopColor="#f59e0b" stopOpacity="0.6" />
-          <stop offset="75%" stopColor="#8b5cf6" stopOpacity="0.4" />
-          <stop offset="100%" stopColor="currentColor" stopOpacity="0.05" />
-        </linearGradient>
-        <radialGradient id="sunAura" cx="50%" cy="40%" r="50%">
-          <stop offset="0%" stopColor="#f59e0b" stopOpacity="0.12" />
-          <stop offset="100%" stopColor="#f59e0b" stopOpacity="0" />
-        </radialGradient>
-      </defs>
+    <div className={`relative ${className}`}>
+      {/* Outer ambient glow frame */}
+      <div className="absolute inset-0 bg-gradient-to-tr from-amber-500/10 via-violet-600/10 to-amber-500/5 rounded-2xl blur-xl -z-10" />
 
-      {/* Subtle warm halo behind central heritage monument */}
-      <circle cx="600" cy="180" r="160" fill="url(#sunAura)" />
+      <svg
+        viewBox="0 0 560 380"
+        fill="none"
+        xmlns="http://www.w3.org/2000/svg"
+        className="w-full h-auto drop-shadow-2xl"
+        aria-hidden="true"
+      >
+        <defs>
+          <linearGradient id="artGoldGlow" x1="0%" y1="100%" x2="100%" y2="0%">
+            <stop offset="0%" stopColor="#d97706" stopOpacity="0.4" />
+            <stop offset="40%" stopColor="#fbbf24" stopOpacity="0.85" />
+            <stop offset="70%" stopColor="#f59e0b" stopOpacity="0.7" />
+            <stop offset="100%" stopColor="#a78bfa" stopOpacity="0.5" />
+          </linearGradient>
 
-      {/* Ground Horizon Line */}
-      <path
-        d="M0 318 L1200 318"
-        stroke="url(#landmarkGlow)"
-        strokeWidth="1.5"
-        strokeLinecap="round"
-      />
+          <linearGradient id="subtleStroke" x1="0%" y1="0%" x2="0%" y2="100%">
+            <stop offset="0%" stopColor="#fde68a" stopOpacity="0.6" />
+            <stop offset="100%" stopColor="#f59e0b" stopOpacity="0.1" />
+          </linearGradient>
 
-      {/* LEFT SECTION: India Gate (Monumental Arc of Triumph) */}
-      <g stroke="url(#landmarkGlow)" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
-        {/* Base steps */}
-        <path d="M120 318 L120 310 L280 310 L280 318" />
-        <path d="M130 310 L130 304 L270 304 L270 310" />
-        {/* Main pillars */}
-        <path d="M140 304 L140 180 L180 180 L180 304" />
-        <path d="M220 304 L220 180 L260 180 L260 304" />
-        {/* Central Arch */}
-        <path d="M180 304 L180 230 C180 200, 220 200, 220 230 L220 304" />
-        {/* Inner small arch decoration */}
-        <path d="M188 304 L188 238 C188 214, 212 214, 212 238 L212 304" strokeDasharray="3 3" opacity="0.6" />
-        {/* Arch keystone and cornice */}
-        <path d="M135 180 L265 180 L265 168 L135 168 Z" />
-        {/* Upper tier pillars & relief */}
-        <path d="M145 168 L145 140 L255 140 L255 168" />
-        <path d="M165 168 L165 140" strokeDasharray="2 2" />
-        <path d="M235 168 L235 140" strokeDasharray="2 2" />
-        {/* Top attic & bowl pavilion */}
-        <path d="M138 140 L262 140 L262 128 L138 128 Z" />
-        <path d="M185 128 L185 116 L215 116 L215 128 Z" />
-        <path d="M190 116 C190 110, 210 110, 210 116" />
-      </g>
+          <radialGradient id="monumentMoon" cx="50%" cy="35%" r="45%">
+            <stop offset="0%" stopColor="#fbbf24" stopOpacity="0.2" />
+            <stop offset="50%" stopColor="#8b5cf6" stopOpacity="0.08" />
+            <stop offset="100%" stopColor="transparent" stopOpacity="0" />
+          </radialGradient>
 
-      {/* CENTER SECTION: Taj Mahal (Symmetrical Dome, Chhatris & Minarets) */}
-      <g stroke="url(#landmarkGlow)" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
-        {/* Plinth */}
-        <path d="M420 318 L420 306 L780 306 L780 318" />
-        <path d="M440 306 L440 300 L760 300 L760 306" />
+          <linearGradient id="cardGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stopColor="#151b2b" stopOpacity="0.8" />
+            <stop offset="100%" stopColor="#0b0f17" stopOpacity="0.95" />
+          </linearGradient>
+        </defs>
 
-        {/* Far Left Minaret */}
-        <path d="M435 300 L445 140 L455 300" />
-        <path d="M438 240 L452 240" />
-        <path d="M440 185 L450 185" />
-        {/* Minaret Cupola */}
-        <path d="M441 140 C441 128, 449 128, 449 140 Z" />
-        <path d="M445 128 L445 120" />
+        {/* Ambient Moon Aura */}
+        <circle cx="280" cy="170" r="140" fill="url(#monumentMoon)" />
 
-        {/* Far Right Minaret */}
-        <path d="M745 300 L755 140 L765 300" />
-        <path d="M748 240 L762 240" />
-        <path d="M750 185 L760 185" />
-        {/* Minaret Cupola */}
-        <path d="M751 140 C751 128, 759 128, 759 140 Z" />
-        <path d="M755 128 L755 120" />
+        {/* Decorative Constellation Stars */}
+        <circle cx="90" cy="80" r="1.5" fill="#fde68a" opacity="0.6" />
+        <circle cx="160" cy="50" r="2" fill="#fbbf24" opacity="0.8" />
+        <circle cx="280" cy="30" r="2.5" fill="#fde68a" opacity="0.9" />
+        <circle cx="400" cy="55" r="2" fill="#a78bfa" opacity="0.75" />
+        <circle cx="480" cy="95" r="1.5" fill="#fde68a" opacity="0.6" />
 
-        {/* Main Mausoleum Structure */}
-        <path d="M490 300 L490 200 L710 200 L710 300" />
-        {/* Cut corners (Chamfered octagonal plan) */}
-        <path d="M490 220 L510 200" />
-        <path d="M710 220 L690 200" />
+        {/* Framing Arch Silhouette (Traditional Jharokha / Gateway Frame) */}
+        <path
+          d="M 50 350 V 160 C 50 90, 160 50, 280 50 C 400 50, 510 90, 510 160 V 350"
+          stroke="url(#artGoldGlow)"
+          strokeWidth="1.2"
+          strokeDasharray="4 3"
+          opacity="0.4"
+        />
+        <path
+          d="M 70 350 V 170 C 70 115, 170 70, 280 70 C 390 70, 490 115, 490 170 V 350"
+          stroke="url(#artGoldGlow)"
+          strokeWidth="0.8"
+          opacity="0.25"
+        />
 
-        {/* Grand Iwan (Central Arch Portal) */}
-        <path d="M560 300 L560 220 C560 195, 640 195, 640 220 L640 300" />
-        {/* Inner pointed cusp of the Iwan */}
-        <path d="M575 300 L575 235 C575 215, 625 215, 625 235 L625 300" strokeDasharray="3 3" opacity="0.6" />
-        <path d="M588 300 L588 255 C588 245, 612 245, 612 255 L612 300" />
+        {/* Ground Platform Horizon */}
+        <path d="M 30 350 H 530" stroke="url(#artGoldGlow)" strokeWidth="1.5" strokeLinecap="round" />
+        <path d="M 60 356 H 500" stroke="#f59e0b" strokeWidth="0.8" opacity="0.4" />
 
-        {/* Left Double-tier side niches */}
-        <path d="M510 295 L510 260 C510 250, 535 250, 535 260 L535 295" />
-        <path d="M510 245 L510 215 C510 208, 535 208, 535 215 L535 245" />
+        {/* LEFT MONUMENT: Qutub Minar & India Gate Facet */}
+        <g stroke="url(#artGoldGlow)" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
+          {/* India Gate Base & Portal */}
+          <path d="M 80 350 V 220 H 170 V 350" />
+          <path d="M 95 350 V 230 H 155 V 350" strokeDasharray="3 3" opacity="0.5" />
+          {/* Main Archway */}
+          <path d="M 105 350 V 270 C 105 245, 145 245, 145 270 V 350" />
+          {/* Attic & Cornice */}
+          <path d="M 75 220 H 175 V 205 H 75 Z" />
+          <path d="M 95 205 V 190 H 155 V 205" />
+          <path d="M 115 190 C 115 180, 135 180, 135 190" />
 
-        {/* Right Double-tier side niches */}
-        <path d="M665 295 L665 260 C665 250, 690 250, 690 260 L690 295" />
-        <path d="M665 245 L665 215 C665 208, 690 208, 690 215 L690 245" />
+          {/* Slender Minaret in background */}
+          <path d="M 60 350 L 68 150 L 76 350" opacity="0.6" strokeWidth="0.9" />
+          <line x1="63" y1="280" x2="73" y2="280" opacity="0.6" />
+          <line x1="65" y1="210" x2="71" y2="210" opacity="0.6" />
+          <circle cx="68" cy="148" r="2" fill="#fbbf24" opacity="0.8" />
+        </g>
 
-        {/* Left Chhatri (Rooftop Pavilion) */}
-        <path d="M525 200 L525 180 L545 180 L545 200" />
-        <path d="M520 180 C520 168, 550 168, 550 180 Z" />
-        <path d="M535 168 L535 160" />
+        {/* CENTER ICONIC MONUMENT: Taj Mahal Symphony */}
+        <g stroke="url(#artGoldGlow)" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
+          {/* Plinth */}
+          <path d="M 180 350 V 335 H 380 V 350" />
 
-        {/* Right Chhatri (Rooftop Pavilion) */}
-        <path d="M655 200 L655 180 L675 180 L675 200" />
-        <path d="M650 180 C650 168, 680 168, 680 180 Z" />
-        <path d="M665 168 L665 160" />
+          {/* Left Taj Minaret */}
+          <path d="M 195 335 L 202 180 L 209 335" />
+          <line x1="197" y1="275" x2="207" y2="275" />
+          <line x1="199" y1="225" x2="205" y2="225" />
+          {/* Minaret Dome & Kalash */}
+          <path d="M 199 180 C 199 170, 205 170, 205 180 Z" fill="#fbbf24" fillOpacity="0.2" />
+          <line x1="202" y1="170" x2="202" y2="162" />
 
-        {/* Central Bulbous Onion Dome & Lotus Finial */}
-        <path d="M565 200 C565 180, 550 155, 600 120 C650 155, 635 180, 635 200" />
-        {/* Finial / Kalash */}
-        <path d="M600 120 L600 95" strokeWidth="1.5" />
-        <circle cx="600" cy="100" r="2.5" />
-        <path d="M595 105 C595 103, 605 103, 605 105" />
-      </g>
+          {/* Right Taj Minaret */}
+          <path d="M 351 335 L 358 180 L 365 335" />
+          <line x1="353" y1="275" x2="363" y2="275" />
+          <line x1="355" y1="225" x2="361" y2="225" />
+          {/* Minaret Dome & Kalash */}
+          <path d="M 355 180 C 355 170, 361 170, 361 180 Z" fill="#fbbf24" fillOpacity="0.2" />
+          <line x1="358" y1="170" x2="358" y2="162" />
 
-      {/* RIGHT SECTION: Lotus Temple / Hawa Mahal Stylized Arch Accents */}
-      <g stroke="url(#landmarkGlow)" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
-        {/* Lotus Petal Array */}
-        <path d="M960 318 C960 270, 1010 220, 1020 190 C1030 220, 1080 270, 1080 318" />
-        {/* Inner Petals */}
-        <path d="M980 318 C980 280, 1015 240, 1020 210 C1025 240, 1060 280, 1060 318" />
-        <path d="M1000 318 C1000 290, 1018 260, 1020 230 C1022 260, 1040 290, 1040 318" />
-        {/* Flanking Petals */}
-        <path d="M935 318 C945 285, 975 260, 1000 250 C985 275, 970 300, 960 318" />
-        <path d="M1105 318 C1095 285, 1065 260, 1040 250 C1055 275, 1070 300, 1080 318" />
+          {/* Main Mausoleum Base */}
+          <path d="M 225 335 V 235 L 240 220 H 320 L 335 235 V 335" />
 
-        {/* Delicate Gateway/Archway Accents on far right */}
-        <path d="M860 318 L860 240 C860 225, 880 215, 895 215 C910 215, 930 225, 930 240 L930 318" />
-        <path d="M875 318 L875 250 C875 240, 885 235, 895 235 C905 235, 915 240, 915 250 L915 318" strokeDasharray="2 2" opacity="0.6" />
-      </g>
+          {/* Central Grand Iwan Arch */}
+          <path d="M 252 335 V 255 C 252 232, 308 232, 308 255 V 335" />
+          {/* Multi-foil inner arch */}
+          <path d="M 262 335 V 270 C 262 252, 298 252, 298 270 V 335" strokeDasharray="2 2" opacity="0.6" />
 
-      {/* Subtle star / diaspora constellation dots */}
-      <circle cx="200" cy="80" r="1" fill="#f59e0b" opacity="0.5" />
-      <circle cx="350" cy="110" r="1.5" fill="#f59e0b" opacity="0.4" />
-      <circle cx="500" cy="70" r="1" fill="#8b5cf6" opacity="0.6" />
-      <circle cx="700" cy="65" r="1.5" fill="#f59e0b" opacity="0.5" />
-      <circle cx="850" cy="100" r="1" fill="#8b5cf6" opacity="0.4" />
-      <circle cx="1050" cy="85" r="1.5" fill="#f59e0b" opacity="0.6" />
-    </svg>
+          {/* Side Niches Double Deck */}
+          <path d="M 233 330 V 295 C 233 288, 247 288, 247 295 V 330" />
+          <path d="M 233 285 V 255 C 233 250, 247 250, 247 255 V 285" />
+
+          <path d="M 313 330 V 295 C 313 288, 327 288, 327 295 V 330" />
+          <path d="M 313 285 V 255 C 313 250, 327 250, 327 255 V 285" />
+
+          {/* Left Chhatri */}
+          <path d="M 245 220 V 205 H 257 V 220" />
+          <path d="M 243 205 C 243 194, 259 194, 259 205 Z" fill="#fbbf24" fillOpacity="0.15" />
+          <line x1="251" y1="194" x2="251" y2="186" />
+
+          {/* Right Chhatri */}
+          <path d="M 303 220 V 205 H 315 V 220" />
+          <path d="M 301 205 C 301 194, 317 194, 317 205 Z" fill="#fbbf24" fillOpacity="0.15" />
+          <line x1="309" y1="194" x2="309" y2="186" />
+
+          {/* Central Bulbous Onion Dome with soft fill */}
+          <path
+            d="M 260 220 C 260 198, 248 165, 280 135 C 312 165, 300 198, 300 220"
+            fill="#fbbf24"
+            fillOpacity="0.12"
+          />
+          {/* Finial / Brass Kalash Spike */}
+          <line x1="280" y1="135" x2="280" y2="105" strokeWidth="1.8" />
+          <circle cx="280" cy="112" r="3" fill="#fbbf24" />
+          <circle cx="280" cy="122" r="2" fill="#fbbf24" />
+        </g>
+
+        {/* RIGHT SECTION: Lotus Temple Petal Sculpture */}
+        <g stroke="url(#artGoldGlow)" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
+          {/* Outer Petals */}
+          <path d="M 400 350 C 400 300, 440 240, 455 210 C 470 240, 510 300, 510 350" />
+          {/* Inner Layer */}
+          <path d="M 420 350 C 420 310, 450 260, 455 230 C 460 260, 490 310, 490 350" />
+          <path d="M 435 350 C 435 320, 452 280, 455 250 C 458 280, 475 320, 475 350" strokeDasharray="3 3" opacity="0.7" />
+        </g>
+
+        {/* Floating Keepsake Ribbon & Gift Sparkle Emblem Overlay */}
+        <g transform="translate(230, 290)">
+          {/* Small floating gift badge */}
+          <rect
+            x="0"
+            y="0"
+            width="100"
+            height="36"
+            rx="18"
+            fill="url(#cardGrad)"
+            stroke="url(#artGoldGlow)"
+            strokeWidth="1"
+            className="filter drop-shadow-md"
+          />
+          {/* Tiny Diya flame / Lotus icon */}
+          <circle cx="24" cy="18" r="6" fill="#f59e0b" fillOpacity="0.25" />
+          <path d="M 24 13 C 25 15, 27 18, 24 22 C 21 18, 23 15, 24 13 Z" fill="#fbbf24" />
+          <text x="38" y="22" fill="#fde68a" fontSize="10.5" fontWeight="600" fontFamily="sans-serif">
+            GiftMind
+          </text>
+        </g>
+      </svg>
+    </div>
   );
 }
 
@@ -251,13 +285,13 @@ export function CulturalDivider({
 }) {
   return (
     <div className={`flex items-center justify-center gap-3 ${className}`} aria-hidden="true">
-      <div className="h-px flex-1 bg-gradient-to-r from-transparent via-amber-500/20 to-amber-500/30" />
-      <div className="flex items-center gap-1.5 text-amber-400/50">
-        <span className="w-1.5 h-1.5 rotate-45 border border-current" />
-        <HeritageArch className="w-4 h-4 text-amber-400/70" />
-        <span className="w-1.5 h-1.5 rotate-45 border border-current" />
+      <div className="h-px flex-1 bg-gradient-to-r from-transparent via-amber-500/25 to-amber-500/35" />
+      <div className="flex items-center gap-1.5 text-amber-400/60">
+        <span className="w-1.5 h-1.5 rotate-45 border border-current opacity-70" />
+        <HeritageArch className="w-4 h-4 text-amber-400" />
+        <span className="w-1.5 h-1.5 rotate-45 border border-current opacity-70" />
       </div>
-      <div className="h-px flex-1 bg-gradient-to-l from-transparent via-violet-500/20 to-violet-500/30" />
+      <div className="h-px flex-1 bg-gradient-to-l from-transparent via-violet-500/25 to-violet-500/35" />
     </div>
   );
 }
