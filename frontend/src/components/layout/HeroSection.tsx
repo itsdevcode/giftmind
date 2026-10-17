@@ -1,3 +1,5 @@
+"use client";
+
 import Image from "next/image";
 import { Gift, BookHeart, ShieldCheck, ArrowRight } from "lucide-react";
 import { HeritageArch, LotusFlowerPattern, MandalaAccent } from "@/components/illustrations/CulturalMotifs";
