@@ -2,7 +2,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -263,7 +263,12 @@ async def refresh_token(
         )
 
     # Check expiration
-    if stored_token.expires_at < datetime.now(UTC):
+    expires_at = (
+        stored_token.expires_at
+        if stored_token.expires_at.tzinfo
+        else stored_token.expires_at.replace(tzinfo=UTC)
+    )
+    if expires_at < datetime.now(UTC):
         stored_token.is_revoked = True
         await db.commit()
         _clear_auth_cookies(response, settings)
@@ -272,7 +277,21 @@ async def refresh_token(
             detail="Refresh token has expired.",
         )
 
-    # Revoke current token upon successful rotation
+    # Atomically revoke current token to prevent concurrent rotation races
+    revoke_res = await db.execute(
+        update(RefreshToken)
+        .where(
+            RefreshToken.id == stored_token.id,
+            RefreshToken.is_revoked.is_(False),
+        )
+        .values(is_revoked=True)
+    )
+    if revoke_res.rowcount == 0:
+        _clear_auth_cookies(response, settings)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Revoked refresh token presented. All sessions terminated.",
+        )
     stored_token.is_revoked = True
 
     # Check user active status

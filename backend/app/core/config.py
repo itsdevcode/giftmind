@@ -77,6 +77,22 @@ class Settings(BaseSettings):
     GEMMA_MODEL: str = "gemma-4-26b-a4b-it"
     AI_REQUEST_TIMEOUT_SECONDS: float = 90.0
 
+    @property
+    def full_inference_retry_budget_seconds(self) -> float:
+        """Maximum legitimate runtime for an AI inference request across all retry attempts and backoffs.
+
+        4 attempts (1 initial + 3 retries), max backoff 10s per retry, plus 30s grace:
+        (4 * timeout) + 30s backoff + 30s grace.
+        """
+        max_retries = 3
+        max_backoff_per_retry = 10.0
+        grace_seconds = 30.0
+        return (
+            (max_retries + 1) * self.AI_REQUEST_TIMEOUT_SECONDS
+            + (max_retries * max_backoff_per_retry)
+            + grace_seconds
+        )
+
     @field_validator("DATABASE_URL", mode="before")
     @classmethod
     def normalize_database_url(cls, v: str) -> str:

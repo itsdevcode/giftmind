@@ -1,9 +1,10 @@
 import logging
+import time
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_current_settings, get_current_user
 from app.api.v1.memories import _check_sufficient_input
 from app.core.config import Settings
+from app.core.tasks import task_manager
 from app.db.session import get_db
 from app.models.gift_project import GiftProject
 from app.models.recipient import Recipient
@@ -42,6 +44,99 @@ router = APIRouter(
 )
 
 
+async def _execute_story_worker(
+    story_id: uuid.UUID,
+    project_id: uuid.UUID,
+    user_id: uuid.UUID,
+    prompt_input: StoryPromptInput,
+    settings: Settings,
+    session_factory,
+) -> None:
+    """Asynchronous background worker task that generates AI story keepsake and persists results."""
+    ai_provider = get_ai_provider(settings)
+    start_time = time.monotonic()
+    logger.info(
+        "Starting background story keepsake generation (story_id=%s, project_id=%s, user_id=%s, provider=%s, model=%s)",
+        story_id,
+        project_id,
+        user_id,
+        ai_provider.provider_name,
+        ai_provider.model_name,
+    )
+    try:
+        raw_story = await ai_provider.generate_story_keepsake(prompt_input)
+
+        async with session_factory() as session:
+            story = await session.get(StoryKeepsake, story_id)
+            if not story or story.status != StoryKeepsakeStatus.pending:
+                logger.warning(
+                    "Story %s is no longer pending; aborting background write.", story_id
+                )
+                return
+
+            story.title = raw_story.title
+            story.dedication = raw_story.dedication
+            story.story_body = raw_story.story_body
+            story.closing_message = raw_story.closing_message
+            story.status = StoryKeepsakeStatus.succeeded
+            story.error_message = None
+            story.updated_at = datetime.now(UTC)
+            await session.commit()
+            elapsed = time.monotonic() - start_time
+            logger.info(
+                "Background story generation succeeded (story_id=%s, project_id=%s, elapsed=%.2fs)",
+                story_id,
+                project_id,
+                elapsed,
+            )
+
+    except Exception as exc:
+        elapsed = time.monotonic() - start_time
+        category = type(exc).__name__
+        if isinstance(exc, AIModelNotFoundError):
+            error_message = (
+                f"The configured AI model '{exc.model_name}' was not found on the inference host."
+            )
+        elif isinstance(exc, AIAuthenticationError):
+            error_message = "The AI inference service authentication failed. Please verify API key configuration."
+        elif isinstance(exc, AIRateLimitError):
+            error_message = "The AI service is currently busy. Please wait a moment and try again."
+        elif isinstance(exc, AIInferenceTimeoutError):
+            error_message = "The AI story inference request timed out. Please try again."
+        elif isinstance(exc, AIProviderUnavailableError):
+            error_message = (
+                "The AI inference service is temporarily unavailable. Please try again shortly."
+            )
+        elif isinstance(exc, (AIResponseValidationError, AIProviderError)):
+            error_message = (
+                "The AI model failed to produce a valid story keepsake. Please try again."
+            )
+        else:
+            error_message = (
+                "An unexpected error occurred during story generation. Please try again."
+            )
+
+        logger.error(
+            "Background story generation failed (story_id=%s, project_id=%s, provider=%s, elapsed=%.2fs, category=%s, err=%s)",
+            story_id,
+            project_id,
+            ai_provider.provider_name,
+            elapsed,
+            category,
+            error_message,
+        )
+        try:
+            async with session_factory() as session:
+                story = await session.get(StoryKeepsake, story_id)
+                if story and story.status == StoryKeepsakeStatus.pending:
+                    story.status = StoryKeepsakeStatus.failed
+                    story.error_message = error_message
+                    story.updated_at = datetime.now(UTC)
+                    await session.commit()
+        except Exception as db_err:
+            logger.critical("Failed to update story %s status to failed: %s", story_id, db_err)
+
+
 @router.post(
     "/generate",
     response_model=StoryKeepsakeRead,
@@ -50,9 +145,13 @@ router = APIRouter(
 )
 async def generate_story(
     project_id: uuid.UUID,
+    request: Request,
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
     settings: Annotated[Settings, Depends(get_current_settings)],
+    background: Annotated[
+        bool, Query(description="Run generation asynchronously in the background")
+    ] = False,
 ) -> StoryKeepsakeRead:
     """Generate a heartwarming biographical story keepsake from submitted memory answers."""
     # 1. Enforce ownership and lock the project row
@@ -71,7 +170,7 @@ async def generate_story(
             detail="Gift project not found.",
         )
 
-    # 2. Check for active pending story generation; recover stale (> timeout + 30s)
+    # 2. Check for active pending story generation; recover stale (> full retry budget)
     active_res = await db.execute(
         select(StoryKeepsake).where(
             StoryKeepsake.gift_project_id == project_id,
@@ -81,9 +180,14 @@ async def generate_story(
     active_story = active_res.scalar_one_or_none()
     if active_story is not None:
         stale_threshold = datetime.now(UTC) - timedelta(
-            seconds=settings.AI_REQUEST_TIMEOUT_SECONDS + 30.0
+            seconds=settings.full_inference_retry_budget_seconds
         )
-        if active_story.created_at < stale_threshold:
+        created_at = (
+            active_story.created_at
+            if active_story.created_at.tzinfo
+            else active_story.created_at.replace(tzinfo=UTC)
+        )
+        if created_at < stale_threshold:
             logger.warning(
                 "Marking stale pending story keepsake %s as failed (created %s)",
                 active_story.id,
@@ -91,6 +195,7 @@ async def generate_story(
             )
             active_story.status = StoryKeepsakeStatus.failed
             active_story.error_message = "Story generation timed out or was abandoned by client."
+            active_story.updated_at = datetime.now(UTC)
             await db.commit()
         else:
             raise HTTPException(
@@ -163,7 +268,24 @@ async def generate_story(
             detail="A story generation is currently in progress for this gift project.",
         ) from None
 
-    # 7. Execute AI story inference without holding transactions or locks
+    # 7. If background execution is enabled (production default):
+    if background:
+        session_factory = getattr(request.app.state, "session_factory", None)
+        if session_factory is not None:
+            task_manager.spawn(
+                _execute_story_worker(
+                    story_id=story_record.id,
+                    project_id=project.id,
+                    user_id=current_user.id,
+                    prompt_input=prompt_input,
+                    settings=settings,
+                    session_factory=session_factory,
+                ),
+                name=f"story-gen-{story_record.id}",
+            )
+        return StoryKeepsakeRead.model_validate(story_record)
+
+    # 8. Synchronous fallback execution (for testing and direct CLI integrations)
     try:
         raw_story = await ai_provider.generate_story_keepsake(prompt_input)
     except AIModelNotFoundError as err:
@@ -268,6 +390,7 @@ async def get_story(
     project_id: uuid.UUID,
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
+    settings: Annotated[Settings, Depends(get_current_settings)],
 ) -> StoryKeepsakeRead:
     """Retrieve the latest story keepsake for an owned gift project."""
     # Enforce ownership
@@ -288,16 +411,36 @@ async def get_story(
         .where(
             StoryKeepsake.gift_project_id == project_id,
             StoryKeepsake.user_id == current_user.id,
-            StoryKeepsake.status == StoryKeepsakeStatus.succeeded,
         )
         .order_by(StoryKeepsake.created_at.desc())
+        .limit(1)
     )
-    story = story_res.scalars().first()
+    story = story_res.scalar_one_or_none()
     if story is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="No story keepsake found for this gift project. Generate one from memories first.",
         )
+
+    # Check for stale pending story
+    if story.status == StoryKeepsakeStatus.pending:
+        stale_threshold = datetime.now(UTC) - timedelta(
+            seconds=settings.full_inference_retry_budget_seconds
+        )
+        created_at = (
+            story.created_at if story.created_at.tzinfo else story.created_at.replace(tzinfo=UTC)
+        )
+        if created_at < stale_threshold:
+            logger.warning(
+                "Marking stale pending story keepsake %s as failed (created %s)",
+                story.id,
+                story.created_at,
+            )
+            story.status = StoryKeepsakeStatus.failed
+            story.error_message = "Story generation timed out or was abandoned. Please retry."
+            story.updated_at = datetime.now(UTC)
+            await db.commit()
+            await db.refresh(story)
 
     return StoryKeepsakeRead.model_validate(story)
 
@@ -426,3 +569,67 @@ async def download_story_pdf(
             "Expires": "0",
         },
     )
+
+
+@router.get(
+    "/{story_id}",
+    response_model=StoryKeepsakeRead,
+    summary="Get status and content for a specific story keepsake",
+)
+async def get_story_status(
+    project_id: uuid.UUID,
+    story_id: uuid.UUID,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    settings: Annotated[Settings, Depends(get_current_settings)],
+) -> StoryKeepsakeRead:
+    """Retrieve status and content for a specific story keepsake, enforcing project ownership."""
+    # 1. Enforce project ownership
+    project_res = await db.execute(
+        select(GiftProject).where(
+            GiftProject.id == project_id,
+            GiftProject.user_id == current_user.id,
+        )
+    )
+    if project_res.scalar_one_or_none() is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Gift project not found.",
+        )
+
+    # 2. Retrieve story
+    story_res = await db.execute(
+        select(StoryKeepsake).where(
+            StoryKeepsake.id == story_id,
+            StoryKeepsake.gift_project_id == project_id,
+            StoryKeepsake.user_id == current_user.id,
+        )
+    )
+    story = story_res.scalar_one_or_none()
+    if story is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Story keepsake not found.",
+        )
+
+    # 3. Check for stale pending story
+    if story.status == StoryKeepsakeStatus.pending:
+        stale_threshold = datetime.now(UTC) - timedelta(
+            seconds=settings.full_inference_retry_budget_seconds
+        )
+        created_at = (
+            story.created_at if story.created_at.tzinfo else story.created_at.replace(tzinfo=UTC)
+        )
+        if created_at < stale_threshold:
+            logger.warning(
+                "Marking stale pending story keepsake %s as failed on status check (created %s)",
+                story.id,
+                story.created_at,
+            )
+            story.status = StoryKeepsakeStatus.failed
+            story.error_message = "Story generation timed out or was abandoned. Please retry."
+            story.updated_at = datetime.now(UTC)
+            await db.commit()
+            await db.refresh(story)
+
+    return StoryKeepsakeRead.model_validate(story)

@@ -13,13 +13,11 @@ from alembic import command
 @pytest.mark.asyncio
 async def test_alembic_migrations_upgrade_and_downgrade_in_disposable_database() -> None:
     """Test full Alembic upgrade head and downgrade base cycle against a disposable PostgreSQL database."""
-    base_db_url = os.environ.get(
-        "DATABASE_URL",
-        "postgresql+asyncpg://postgres@localhost:5433/giftmind_test",
-    )
-
-    if not base_db_url.startswith("postgresql"):
-        pytest.skip("Alembic disposable database migration test requires PostgreSQL.")
+    base_db_url = os.environ.get("DATABASE_URL")
+    if not base_db_url or not base_db_url.startswith("postgresql"):
+        pytest.skip(
+            "Alembic disposable database migration test requires PostgreSQL DATABASE_URL in environment."
+        )
 
     # Create temporary database name
     disposable_db_name = f"disposable_test_{uuid.uuid4().hex[:8]}"

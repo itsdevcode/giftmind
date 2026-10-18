@@ -441,10 +441,11 @@ export interface StoryKeepsake {
 export async function generateStory(
   projectId: string,
   token: string,
-  csrfToken: string
+  csrfToken: string,
+  background: boolean = true
 ): Promise<StoryKeepsake> {
   return fetchApi<StoryKeepsake>(
-    `/api/v1/gift-projects/${projectId}/story/generate`,
+    `/api/v1/gift-projects/${projectId}/story/generate?background=${background}`,
     {
       method: "POST",
       token,
@@ -459,6 +460,20 @@ export async function getLatestStory(
 ): Promise<StoryKeepsake> {
   return fetchApi<StoryKeepsake>(
     `/api/v1/gift-projects/${projectId}/story`,
+    {
+      method: "GET",
+      token,
+    }
+  );
+}
+
+export async function getStoryStatus(
+  projectId: string,
+  storyId: string,
+  token: string
+): Promise<StoryKeepsake> {
+  return fetchApi<StoryKeepsake>(
+    `/api/v1/gift-projects/${projectId}/story/${storyId}`,
     {
       method: "GET",
       token,

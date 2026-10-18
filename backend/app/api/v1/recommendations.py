@@ -199,7 +199,7 @@ async def generate_recommendations(
     active_gen = active_gen_res.scalar_one_or_none()
     if active_gen is not None:
         stale_threshold = datetime.now(UTC) - timedelta(
-            seconds=settings.AI_REQUEST_TIMEOUT_SECONDS + 30.0
+            seconds=settings.full_inference_retry_budget_seconds
         )
         created_at = (
             active_gen.created_at
@@ -480,7 +480,7 @@ async def get_latest_recommendations(
     # Check for stale pending generation
     if generation.status == RecommendationGenerationStatus.pending:
         stale_threshold = datetime.now(UTC) - timedelta(
-            seconds=settings.AI_REQUEST_TIMEOUT_SECONDS + 30.0
+            seconds=settings.full_inference_retry_budget_seconds
         )
         created_at = (
             generation.created_at
@@ -561,7 +561,7 @@ async def get_generation_status(
     # Stale recovery if pending
     if generation.status == RecommendationGenerationStatus.pending:
         stale_threshold = datetime.now(UTC) - timedelta(
-            seconds=settings.AI_REQUEST_TIMEOUT_SECONDS + 30.0
+            seconds=settings.full_inference_retry_budget_seconds
         )
         created_at = (
             generation.created_at
