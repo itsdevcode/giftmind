@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import time
 import uuid
@@ -82,7 +83,9 @@ async def _execute_generation_worker(
             gen = await session.get(GiftRecommendationGeneration, generation_id)
             if not gen or gen.status != RecommendationGenerationStatus.pending:
                 logger.warning(
-                    "Generation %s is no longer pending; aborting background write.", generation_id
+                    "Generation %s is no longer pending (current: %s); aborting background write.",
+                    generation_id,
+                    getattr(gen, "status", None),
                 )
                 return
 
@@ -103,6 +106,7 @@ async def _execute_generation_worker(
             session.add_all(db_recommendations)
             gen.status = RecommendationGenerationStatus.succeeded
             gen.error_message = None
+            gen.updated_at = datetime.now(UTC)
             await session.commit()
             elapsed = time.monotonic() - start_time
             logger.info(
@@ -111,6 +115,30 @@ async def _execute_generation_worker(
                 project_id,
                 elapsed,
             )
+
+    except asyncio.CancelledError:
+        logger.warning(
+            "Background recommendation generation task was cancelled (gen_id=%s, project_id=%s)",
+            generation_id,
+            project_id,
+        )
+        try:
+            async with session_factory() as session:
+                gen = await session.get(GiftRecommendationGeneration, generation_id)
+                if gen and gen.status == RecommendationGenerationStatus.pending:
+                    gen.status = RecommendationGenerationStatus.failed
+                    gen.error_message = (
+                        "Recommendation generation was interrupted or cancelled. Please retry."
+                    )
+                    gen.updated_at = datetime.now(UTC)
+                    await session.commit()
+        except Exception as cancel_db_err:
+            logger.warning(
+                "Failed to update cancelled generation %s status to failed: %s",
+                generation_id,
+                cancel_db_err,
+            )
+        raise
 
     except Exception as exc:
         elapsed = time.monotonic() - start_time
@@ -149,7 +177,14 @@ async def _execute_generation_worker(
                 if gen and gen.status == RecommendationGenerationStatus.pending:
                     gen.status = RecommendationGenerationStatus.failed
                     gen.error_message = error_message
+                    gen.updated_at = datetime.now(UTC)
                     await session.commit()
+                else:
+                    logger.warning(
+                        "Generation %s is no longer pending (current: %s); skipping error transition.",
+                        generation_id,
+                        getattr(gen, "status", None),
+                    )
         except Exception as db_err:
             logger.critical(
                 "Failed to update generation %s status to failed: %s", generation_id, db_err
@@ -199,7 +234,7 @@ async def generate_recommendations(
     active_gen = active_gen_res.scalar_one_or_none()
     if active_gen is not None:
         stale_threshold = datetime.now(UTC) - timedelta(
-            seconds=settings.AI_REQUEST_TIMEOUT_SECONDS + 30.0
+            seconds=settings.full_inference_retry_budget_seconds
         )
         created_at = (
             active_gen.created_at
@@ -272,21 +307,59 @@ async def generate_recommendations(
     # 6. If background execution is enabled (production default):
     if background:
         session_factory = getattr(request.app.state, "session_factory", None)
-        if session_factory is not None:
+        if session_factory is None:
+            logger.error(
+                "Background recommendation worker dispatch failed: session_factory is not configured on app state (project_id=%s, gen_id=%s)",
+                project.id,
+                generation.id,
+            )
+            generation.status = RecommendationGenerationStatus.failed
+            generation.error_message = (
+                "Background worker dispatch failed due to server configuration. Please try again."
+            )
+            generation.updated_at = datetime.now(UTC)
+            await db.commit()
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to schedule background recommendation generation. Please try again.",
+            )
+
+        worker_coro = _execute_generation_worker(
+            generation_id=generation.id,
+            project_id=project.id,
+            user_id=current_user.id,
+            prompt_input=prompt_input,
+            budget_min=project.budget_min,
+            budget_max=project.budget_max,
+            currency=project.currency,
+            settings=settings,
+            session_factory=session_factory,
+        )
+        try:
             task_manager.spawn(
-                _execute_generation_worker(
-                    generation_id=generation.id,
-                    project_id=project.id,
-                    user_id=current_user.id,
-                    prompt_input=prompt_input,
-                    budget_min=project.budget_min,
-                    budget_max=project.budget_max,
-                    currency=project.currency,
-                    settings=settings,
-                    session_factory=session_factory,
-                ),
+                worker_coro,
                 name=f"rec-gen-{generation.id}",
             )
+        except Exception as spawn_exc:
+            try:
+                worker_coro.close()
+            except Exception:
+                pass
+            logger.error(
+                "Failed to spawn background recommendation generation task (project_id=%s, gen_id=%s): %s",
+                project.id,
+                generation.id,
+                type(spawn_exc).__name__,
+            )
+            generation.status = RecommendationGenerationStatus.failed
+            generation.error_message = "Background worker dispatch failed. Please try again."
+            generation.updated_at = datetime.now(UTC)
+            await db.commit()
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to schedule background recommendation generation. Please try again.",
+            ) from None
+
         return GiftRecommendationGenerationRead(
             id=generation.id,
             gift_project_id=generation.gift_project_id,
@@ -480,7 +553,7 @@ async def get_latest_recommendations(
     # Check for stale pending generation
     if generation.status == RecommendationGenerationStatus.pending:
         stale_threshold = datetime.now(UTC) - timedelta(
-            seconds=settings.AI_REQUEST_TIMEOUT_SECONDS + 30.0
+            seconds=settings.full_inference_retry_budget_seconds
         )
         created_at = (
             generation.created_at
@@ -490,6 +563,7 @@ async def get_latest_recommendations(
         if created_at < stale_threshold:
             generation.status = RecommendationGenerationStatus.failed
             generation.error_message = "Generation timed out. Please retry."
+            generation.updated_at = datetime.now(UTC)
             await db.commit()
             await db.refresh(generation)
 
@@ -561,7 +635,7 @@ async def get_generation_status(
     # Stale recovery if pending
     if generation.status == RecommendationGenerationStatus.pending:
         stale_threshold = datetime.now(UTC) - timedelta(
-            seconds=settings.AI_REQUEST_TIMEOUT_SECONDS + 30.0
+            seconds=settings.full_inference_retry_budget_seconds
         )
         created_at = (
             generation.created_at
@@ -571,6 +645,7 @@ async def get_generation_status(
         if created_at < stale_threshold:
             generation.status = RecommendationGenerationStatus.failed
             generation.error_message = "Generation timed out. Please retry."
+            generation.updated_at = datetime.now(UTC)
             await db.commit()
             await db.refresh(generation)
 

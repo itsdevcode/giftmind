@@ -12,13 +12,22 @@ class BackgroundTaskManager:
 
     def __init__(self) -> None:
         self._tasks: set[asyncio.Task[Any]] = set()
+        self._shutting_down: bool = False
 
     @property
     def active_task_count(self) -> int:
         return len(self._tasks)
 
+    @property
+    def is_shutting_down(self) -> bool:
+        return self._shutting_down
+
     def spawn(self, coro: Coroutine[Any, Any, Any], name: str | None = None) -> asyncio.Task[Any]:
         """Spawn a tracked background task with a strong reference and completion callback."""
+        if self._shutting_down:
+            coro.close()
+            raise RuntimeError("Cannot spawn background task: task manager is shutting down.")
+
         task = asyncio.create_task(coro, name=name)
         self._tasks.add(task)
         task.add_done_callback(self._on_task_done)
@@ -32,7 +41,10 @@ class BackgroundTaskManager:
     def _on_task_done(self, task: asyncio.Task[Any]) -> None:
         self._tasks.discard(task)
         if not task.cancelled():
-            exc = task.exception()
+            try:
+                exc = task.exception()
+            except asyncio.CancelledError:
+                exc = None
             if exc:
                 logger.error(
                     "Background task '%s' failed with unhandled exception: %s",
@@ -45,16 +57,17 @@ class BackgroundTaskManager:
 
     async def shutdown(self, timeout: float = 5.0) -> None:
         """Cancel and await remaining background tasks on server shutdown."""
+        self._shutting_down = True
         if not self._tasks:
             return
         task_count = len(self._tasks)
         logger.info("Gracefully shutting down %d active background tasks...", task_count)
-        for task in self._tasks:
+        for task in list(self._tasks):
             task.cancel()
 
         try:
             async with asyncio.timeout(timeout):
-                await asyncio.gather(*self._tasks, return_exceptions=True)
+                await asyncio.gather(*list(self._tasks), return_exceptions=True)
         except TimeoutError:
             logger.warning(
                 "Timed out waiting for %d background tasks to finish during shutdown",
@@ -62,6 +75,11 @@ class BackgroundTaskManager:
             )
         finally:
             self._tasks.clear()
+
+    def reset(self) -> None:
+        """Reset task manager state for testing environments."""
+        self._tasks.clear()
+        self._shutting_down = False
 
 
 task_manager = BackgroundTaskManager()

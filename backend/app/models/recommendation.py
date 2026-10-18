@@ -105,6 +105,7 @@ class GiftRecommendationGeneration(Base):
             "gift_project_id",
             unique=True,
             postgresql_where=(status == RecommendationGenerationStatus.pending),
+            sqlite_where=(status == RecommendationGenerationStatus.pending),
         ),
     )
 

@@ -147,5 +147,6 @@ class StoryKeepsake(Base):
             "gift_project_id",
             unique=True,
             postgresql_where=(status == StoryKeepsakeStatus.pending),
+            sqlite_where=(status == StoryKeepsakeStatus.pending),
         ),
     )

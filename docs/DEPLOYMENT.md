@@ -102,6 +102,14 @@ alembic check
 | `GEMMA_MODEL` | Open-weight model hosted on Gemini infrastructure | `gemma-4-26b-a4b-it` |
 | `AI_REQUEST_TIMEOUT_SECONDS` | Timeout for AI inference call | `90.0` |
 
+### Background Task Worker Architecture & MVP Lifecycle Limitations
+GiftMind processes long-running Gemma 4 inferences (both gift recommendation and story keepsake generation) asynchronously using FastAPI background tasks managed via `task_manager.spawn()` with isolated database session factories:
+- **In-Memory Worker Lifecycle**: Background tasks execute in-memory within the web process using Python's `asyncio.Task`. Tasks are not durable across Render instance restarts or deployment redeployments. Unfinished tasks do not automatically resume on restart.
+- **Interrupted Task Recovery**: If an instance restarts while generations or stories are running, the application's startup lifecycle executes `recover_orphaned_generations`, immediately transitioning all lingering `pending` records to `failed` (`"interrupted due to a server restart"`). This ensures generation records never remain permanently pending and clears partial unique index slots so users can cleanly retry without `409 Conflict` errors.
+- **Client Polling & Stale Safety**: Frontend clients poll status endpoints (`/story/{story_id}` and `/recommendations/{generation_id}`) up to 450s (180 attempts at 2.5s intervals). If an instance terminates abnormally without startup recovery, the status endpoints automatically expire records exceeding the full inference retry budget (~420s) to `failed`.
+- **Worker Overwrite Protection**: Background workers verify record status before updating. If a generation was marked failed (due to timeout or restart), workers abort without overwriting the failed state.
+- **Scaling / Future Production**: For high-concurrency production deployments beyond the hackathon MVP, migrate background generation from in-process `asyncio` tasks to a durable distributed task queue (such as Celery or ARQ with Redis).
+
 ---
 
 ## 4. Frontend Deployment (Vercel)

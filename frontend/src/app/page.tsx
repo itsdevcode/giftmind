@@ -11,7 +11,7 @@ import { GiftRecommendationsWorkspace } from "@/components/gifts/GiftRecommendat
 import { MemoryInterview } from "@/components/story/MemoryInterview";
 import { StoryEditor } from "@/components/story/StoryEditor";
 import { AuthModal } from "@/components/auth/AuthModal";
-import { Gift, BookHeart, ArrowRight, Sparkles } from "lucide-react";
+import { Gift, BookHeart, ArrowRight, Sparkles, AlertCircle } from "lucide-react";
 import { CulturalDivider, HeritageArch, MandalaAccent, LotusFlowerPattern } from "@/components/illustrations/CulturalMotifs";
 import {
   loginUser,
@@ -31,6 +31,7 @@ import {
   updateMemories,
   generateStory,
   getLatestStory,
+  getStoryStatus,
   updateStory,
   downloadStoryPdf,
   type User,
@@ -104,12 +105,23 @@ export default function HomePage() {
     }
   }, []);
 
-  // Clean up polling timer when component unmounts
+  // Polling reference for asynchronous story keepsake generations
+  const storyPollingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  const stopPollingStory = useCallback(() => {
+    if (storyPollingTimeoutRef.current) {
+      clearTimeout(storyPollingTimeoutRef.current);
+      storyPollingTimeoutRef.current = null;
+    }
+  }, []);
+
+  // Clean up polling timers when component unmounts
   useEffect(() => {
     return () => {
       stopPollingRecommendations();
+      stopPollingStory();
     };
-  }, [stopPollingRecommendations]);
+  }, [stopPollingRecommendations, stopPollingStory]);
 
   // Subscribe to transparent token refresh from api.ts
   useEffect(() => {
@@ -206,6 +218,7 @@ export default function HomePage() {
   // Reset project-scoped subresources immediately on project switch
   const resetProjectSubresources = useCallback(() => {
     stopPollingRecommendations();
+    stopPollingStory();
     setLatestGeneration(null);
     setStory(null);
     setMemories({
@@ -220,7 +233,8 @@ export default function HomePage() {
     setGenerationError(null);
     setStoryError(null);
     setGenerating(false);
-  }, [stopPollingRecommendations]);
+    setStoryLoading(false);
+  }, [stopPollingRecommendations, stopPollingStory]);
 
   const handleSelectProject = (projectId: string) => {
     if (projectId === selectedProjectId) return;
@@ -237,7 +251,9 @@ export default function HomePage() {
       setGenerationError(null);
 
       let attempts = 0;
-      const maxAttempts = 60; // 60 attempts * 2.5s = 150s
+      // Budget aligns with settings.full_inference_retry_budget_seconds (~420s)
+      // 180 attempts * 2.5s = 450s, preventing premature frontend abandonment
+      const maxAttempts = 180;
 
       const pollTick = async () => {
         if (activeProjectIdRef.current !== projectId) {
@@ -294,6 +310,75 @@ export default function HomePage() {
       pollingTimeoutRef.current = setTimeout(pollTick, 2500);
     },
     [token, stopPollingRecommendations]
+  );
+
+  // Start polling story keepsake generation status at bounded interval (2.5s)
+  const startPollingStory = useCallback(
+    (projectId: string, storyId?: string) => {
+      stopPollingStory();
+      setStoryLoading(true);
+      setStoryError(null);
+
+      let attempts = 0;
+      // Budget aligns with settings.full_inference_retry_budget_seconds (~420s)
+      // 180 attempts * 2.5s = 450s, preventing premature frontend abandonment
+      const maxAttempts = 180;
+
+      const pollTick = async () => {
+        if (activeProjectIdRef.current !== projectId) {
+          stopPollingStory();
+          return;
+        }
+
+        attempts++;
+        try {
+          const latest = storyId
+            ? await getStoryStatus(projectId, storyId, token || "")
+            : await getLatestStory(projectId, token || "");
+
+          if (activeProjectIdRef.current !== projectId) return;
+
+          setStory(latest);
+
+          if (latest.status === "succeeded") {
+            setStoryLoading(false);
+            stopPollingStory();
+            return;
+          }
+
+          if (latest.status === "failed") {
+            setStoryLoading(false);
+            setStoryError(latest.error_message || "Story generation failed. Please try again.");
+            stopPollingStory();
+            return;
+          }
+
+          // Still pending
+          if (attempts >= maxAttempts) {
+            setStoryLoading(false);
+            setStoryError("Story generation timed out. Please try again.");
+            stopPollingStory();
+            return;
+          }
+
+          storyPollingTimeoutRef.current = setTimeout(pollTick, 2500);
+        } catch (err: unknown) {
+          if (activeProjectIdRef.current !== projectId) return;
+          if (attempts >= maxAttempts) {
+            setStoryLoading(false);
+            setStoryError(
+              err instanceof Error ? err.message : "Failed to retrieve story keepsake status."
+            );
+            stopPollingStory();
+          } else {
+            storyPollingTimeoutRef.current = setTimeout(pollTick, 2500);
+          }
+        }
+      };
+
+      storyPollingTimeoutRef.current = setTimeout(pollTick, 2500);
+    },
+    [token, stopPollingStory]
   );
 
   // Load project subresources whenever selectedProjectId changes
@@ -353,14 +438,29 @@ export default function HomePage() {
       .then((data) => {
         if (activeProjectIdRef.current === currentProjectId) {
           setStory(data);
+          if (data.status === "pending") {
+            startPollingStory(currentProjectId, data.id);
+          } else {
+            setStoryLoading(false);
+            if (data.status === "failed") {
+              setStoryError(data.error_message || "Story generation failed. Please try again.");
+            }
+          }
         }
       })
       .catch(() => {
         if (activeProjectIdRef.current === currentProjectId) {
           setStory(null);
+          setStoryLoading(false);
         }
       });
-  }, [selectedProjectId, token, resetProjectSubresources, startPollingRecommendations]);
+  }, [
+    selectedProjectId,
+    token,
+    resetProjectSubresources,
+    startPollingRecommendations,
+    startPollingStory,
+  ]);
 
   // Auth Submit Handler
   const handleAuthSubmit = async (
@@ -520,16 +620,21 @@ export default function HomePage() {
     setStoryError(null);
 
     try {
-      const generated = await generateStory(targetProjectId, token, csrfToken);
+      const generated = await generateStory(targetProjectId, token, csrfToken, true);
       if (activeProjectIdRef.current === targetProjectId) {
         setStory(generated);
+        if (generated.status === "pending") {
+          startPollingStory(targetProjectId, generated.id);
+        } else if (generated.status === "succeeded") {
+          setStoryLoading(false);
+        } else if (generated.status === "failed") {
+          setStoryLoading(false);
+          setStoryError(generated.error_message || "Story generation failed. Please try again.");
+        }
       }
     } catch (err: unknown) {
       if (activeProjectIdRef.current === targetProjectId) {
         setStoryError(err instanceof Error ? err.message : "Failed to generate story keepsake");
-      }
-    } finally {
-      if (activeProjectIdRef.current === targetProjectId) {
         setStoryLoading(false);
       }
     }
@@ -859,7 +964,38 @@ export default function HomePage() {
                         storyLoading={storyLoading}
                       />
 
-                      {story && (
+                      {/* Story Error Banner with Retry */}
+                      {storyError && (
+                        <div className="max-w-4xl mx-auto p-4 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-300 text-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                          <div className="flex items-center gap-2">
+                            <AlertCircle className="w-4 h-4 shrink-0 text-rose-400" />
+                            <span>{storyError}</span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={handleGenerateStory}
+                            disabled={storyLoading || !hasSufficientMemories}
+                            className="px-3 py-1.5 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 text-rose-200 text-xs font-medium border border-rose-500/30 transition-colors shrink-0 disabled:opacity-50"
+                          >
+                            Retry Generation
+                          </button>
+                        </div>
+                      )}
+
+                      {/* Story Loading / Polling Progress Card */}
+                      {storyLoading && (
+                        <div className="max-w-4xl mx-auto p-6 saas-card bg-gradient-to-r from-violet-950/20 to-slate-900/40 border-violet-500/30 flex items-center gap-4 animate-pulse">
+                          <div className="w-8 h-8 rounded-full border-2 border-violet-400 border-t-transparent animate-spin shrink-0" />
+                          <div className="space-y-1">
+                            <h4 className="text-sm font-semibold text-white">Weaving your biographical keepsake...</h4>
+                            <p className="text-xs text-slate-400">
+                              Google-hosted Gemma 4 is synthesizing your shared memories into an authentic keepsake narrative.
+                            </p>
+                          </div>
+                        </div>
+                      )}
+
+                      {story && story.status === "succeeded" && (
                         <StoryEditor
                           story={story}
                           onSaveStory={handleSaveStory}

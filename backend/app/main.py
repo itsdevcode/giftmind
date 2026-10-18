@@ -7,6 +7,7 @@ from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy import update
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.api.v1.router import router as api_v1_router
 from app.core.config import Settings, get_settings
@@ -22,6 +23,32 @@ from app.schemas.health import HealthResponse
 logger = logging.getLogger(__name__)
 
 
+async def recover_orphaned_generations(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Recover any orphaned pending generations/stories left behind by an unexpected server shutdown."""
+    async with session_factory() as session:
+        await session.execute(
+            update(GiftRecommendationGeneration)
+            .where(GiftRecommendationGeneration.status == RecommendationGenerationStatus.pending)
+            .values(
+                status=RecommendationGenerationStatus.failed,
+                error_message="Generation was interrupted due to a server restart. Please retry.",
+                updated_at=datetime.now(UTC),
+            )
+        )
+        await session.execute(
+            update(StoryKeepsake)
+            .where(StoryKeepsake.status == StoryKeepsakeStatus.pending)
+            .values(
+                status=StoryKeepsakeStatus.failed,
+                error_message="Story generation was interrupted due to a server restart. Please retry.",
+                updated_at=datetime.now(UTC),
+            )
+        )
+        await session.commit()
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     """Application factory for GiftMind API."""
     if settings is None:
@@ -30,6 +57,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         """Application lifespan manager for startup and graceful shutdown."""
+        # Reset background task manager state on application startup
+        task_manager.reset()
+
         # Initialize engine and sessionmaker strictly scoped to this application instance
         engine, session_factory = create_engine_and_sessionmaker(settings)
         app.state.engine = engine
@@ -39,29 +69,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # Recover any orphaned pending generations/stories left behind by previous unexpected server shutdown
         if not settings.DATABASE_URL.startswith("sqlite"):
             try:
-                async with session_factory() as session:
-                    await session.execute(
-                        update(GiftRecommendationGeneration)
-                        .where(
-                            GiftRecommendationGeneration.status
-                            == RecommendationGenerationStatus.pending
-                        )
-                        .values(
-                            status=RecommendationGenerationStatus.failed,
-                            error_message="Generation was interrupted due to a server restart. Please retry.",
-                            updated_at=datetime.now(UTC),
-                        )
-                    )
-                    await session.execute(
-                        update(StoryKeepsake)
-                        .where(StoryKeepsake.status == StoryKeepsakeStatus.pending)
-                        .values(
-                            status=StoryKeepsakeStatus.failed,
-                            error_message="Story generation was interrupted due to a server restart. Please retry.",
-                            updated_at=datetime.now(UTC),
-                        )
-                    )
-                    await session.commit()
+                await recover_orphaned_generations(session_factory)
             except Exception as exc:
                 logger.warning("Could not execute startup pending generation recovery: %s", exc)
 
