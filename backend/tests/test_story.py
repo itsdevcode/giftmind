@@ -7,7 +7,6 @@ from unittest.mock import patch
 import pypdf
 import pytest
 from httpx import AsyncClient
-from sqlalchemy import update
 
 from app.models.gift_project import GiftProject
 from app.models.story import StoryKeepsake, StoryKeepsakeStatus
@@ -616,20 +615,163 @@ async def test_restart_recovery_marks_pending_story_failed(client: AsyncClient, 
         await session.commit()
         orphaned_id = orphaned.id
 
-        # Execute recovery update query as performed in lifespan startup
-        await session.execute(
-            update(StoryKeepsake)
-            .where(StoryKeepsake.status == StoryKeepsakeStatus.pending)
-            .values(
-                status=StoryKeepsakeStatus.failed,
-                error_message="Story generation was interrupted due to a server restart. Please retry.",
-                updated_at=datetime.now(UTC),
-            )
-        )
-        await session.commit()
-        session.expire_all()
+    # Call recover_orphaned_generations directly as run during lifespan startup
+    from app.main import recover_orphaned_generations
 
+    await recover_orphaned_generations(session_factory)
+
+    async with session_factory() as session:
         recovered = await session.get(StoryKeepsake, orphaned_id)
         assert recovered is not None
         assert recovered.status == StoryKeepsakeStatus.failed
         assert "server restart" in (recovered.error_message or "").lower()
+
+
+@pytest.mark.asyncio
+async def test_story_background_generation_missing_session_factory(client: AsyncClient, test_app):
+    """When session_factory is missing on app state, generation returns 500, transitions record to failed, and unblocks future retries."""
+    token, _, proj_id = await _create_test_user_project_and_memories(
+        client, "Factory Missing", "factory_missing@example.com"
+    )
+    headers = {"Authorization": f"Bearer {token}"}
+
+    # Temporarily isolate background session_factory on app state while keeping request get_db functional
+    from app.db.session import get_db
+
+    orig_factory = test_app.state.session_factory
+
+    async def override_get_db():
+        async with orig_factory() as session:
+            yield session
+
+    test_app.dependency_overrides[get_db] = override_get_db
+    test_app.state.session_factory = None
+
+    try:
+        res = await client.post(
+            f"/api/v1/gift-projects/{proj_id}/story/generate?background=true",
+            headers=headers,
+        )
+        assert res.status_code == 500
+        assert "failed to schedule" in res.json()["detail"].lower()
+
+        # Verify story record in DB is transitioned to failed (not stuck in pending)
+        async with orig_factory() as session:
+            from sqlalchemy import select
+
+            story_res = await session.execute(
+                select(StoryKeepsake).where(StoryKeepsake.gift_project_id == uuid.UUID(proj_id))
+            )
+            story = story_res.scalar_one_or_none()
+            assert story is not None
+            assert story.status == StoryKeepsakeStatus.failed
+            assert "server configuration" in (story.error_message or "").lower()
+
+    finally:
+        test_app.dependency_overrides.pop(get_db, None)
+        test_app.state.session_factory = orig_factory
+
+    # Verify that since record is marked failed, subsequent generation is not blocked by 409 Conflict
+    retry_res = await client.post(
+        f"/api/v1/gift-projects/{proj_id}/story/generate?background=true",
+        headers=headers,
+    )
+    assert retry_res.status_code == 201
+    assert retry_res.json()["status"] == "pending"
+
+
+@pytest.mark.asyncio
+async def test_story_background_generation_task_scheduling_failure(
+    client: AsyncClient, test_app, monkeypatch: pytest.MonkeyPatch
+):
+    """When task_manager.spawn raises an exception, generation returns 500 and transitions record to failed."""
+    token, _, proj_id = await _create_test_user_project_and_memories(
+        client, "Spawn Failure", "spawn_failure@example.com"
+    )
+    headers = {"Authorization": f"Bearer {token}"}
+
+    from app.core.tasks import task_manager
+
+    def failing_spawn(coro, _name=None):
+        coro.close()
+        raise RuntimeError("Simulated task spawn failure (e.g. event loop shutting down)")
+
+    monkeypatch.setattr(task_manager, "spawn", failing_spawn)
+
+    res = await client.post(
+        f"/api/v1/gift-projects/{proj_id}/story/generate?background=true",
+        headers=headers,
+    )
+    assert res.status_code == 500
+    assert "failed to schedule" in res.json()["detail"].lower()
+
+    # Verify record was marked failed in DB
+    session_factory = test_app.state.session_factory
+    async with session_factory() as session:
+        from sqlalchemy import select
+
+        story_res = await session.execute(
+            select(StoryKeepsake).where(StoryKeepsake.gift_project_id == uuid.UUID(proj_id))
+        )
+        story = story_res.scalar_one_or_none()
+        assert story is not None
+        assert story.status == StoryKeepsakeStatus.failed
+        assert "worker dispatch failed" in (story.error_message or "").lower()
+
+
+@pytest.mark.asyncio
+async def test_story_worker_does_not_overwrite_already_failed_story(client: AsyncClient, test_app):
+    """A worker completing inference must not overwrite a story keepsake that was already marked failed by timeout or restart."""
+    from app.api.v1.story import _execute_story_worker
+    from app.schemas.story import StoryPromptInput
+
+    token, _, proj_id = await _create_test_user_project_and_memories(
+        client, "No Overwrite", "no_overwrite@example.com"
+    )
+    session_factory = test_app.state.session_factory
+
+    async with session_factory() as session:
+        proj = await session.get(GiftProject, uuid.UUID(proj_id))
+        assert proj is not None
+
+        # Insert a story already in failed status
+        failed_story = StoryKeepsake(
+            gift_project_id=uuid.UUID(proj_id),
+            user_id=proj.user_id,
+            title="Failed Story Title",
+            dedication="",
+            story_body="",
+            closing_message="",
+            model_name="gemma-4-26b-a4b-it",
+            prompt_version="v1",
+            status=StoryKeepsakeStatus.failed,
+            error_message="Original timeout failure reason.",
+        )
+        session.add(failed_story)
+        await session.commit()
+        story_id = failed_story.id
+        user_id = proj.user_id
+
+    prompt_input = StoryPromptInput(
+        recipient_name="Jordan",
+        relationship="Partner",
+        occasion="Birthday",
+        memories={"q1": "Great memory"},
+    )
+
+    # Run the worker - it generates a story, but sees status is no longer pending and aborts write
+    await _execute_story_worker(
+        story_id=story_id,
+        project_id=uuid.UUID(proj_id),
+        user_id=user_id,
+        prompt_input=prompt_input,
+        settings=test_app.state.settings,
+        session_factory=session_factory,
+    )
+
+    async with session_factory() as session:
+        refreshed = await session.get(StoryKeepsake, story_id)
+        assert refreshed is not None
+        assert refreshed.status == StoryKeepsakeStatus.failed
+        assert refreshed.error_message == "Original timeout failure reason."
+        assert refreshed.story_body == ""  # Was not overwritten by generated story!

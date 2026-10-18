@@ -574,3 +574,168 @@ async def test_stale_pending_generation_recovery_on_status_get(
     data = status_res.json()
     assert data["status"] == "failed"
     assert "timed out" in data["error_message"].lower()
+
+
+@pytest.mark.asyncio
+async def test_recommendation_background_generation_missing_session_factory(
+    client: AsyncClient, test_app
+) -> None:
+    """When session_factory is missing on app state, recommendation generation returns 500, transitions record to failed, and unblocks future retries."""
+    token, _, proj_id = await _create_user_and_project(
+        client, "Rec Factory Missing", "rec_factory_missing@example.com"
+    )
+    headers = {"Authorization": f"Bearer {token}"}
+
+    # Temporarily isolate background session_factory on app state while keeping request get_db functional
+    from app.db.session import get_db
+
+    orig_factory = test_app.state.session_factory
+
+    async def override_get_db():
+        async with orig_factory() as session:
+            yield session
+
+    test_app.dependency_overrides[get_db] = override_get_db
+    test_app.state.session_factory = None
+
+    try:
+        res = await client.post(
+            f"/api/v1/gift-projects/{proj_id}/recommendations/generate?background=true",
+            headers=headers,
+        )
+        assert res.status_code == 500
+        assert "failed to schedule" in res.json()["detail"].lower()
+
+        # Verify generation record in DB is transitioned to failed
+        async with orig_factory() as session:
+            gen_res = await session.execute(
+                select(GiftRecommendationGeneration).where(
+                    GiftRecommendationGeneration.gift_project_id == uuid.UUID(proj_id)
+                )
+            )
+            gen = gen_res.scalar_one_or_none()
+            assert gen is not None
+            assert gen.status == RecommendationGenerationStatus.failed
+            assert "server configuration" in (gen.error_message or "").lower()
+
+    finally:
+        test_app.dependency_overrides.pop(get_db, None)
+        test_app.state.session_factory = orig_factory
+
+    # Verify that since record is marked failed, subsequent generation is not blocked by 409 Conflict
+    retry_res = await client.post(
+        f"/api/v1/gift-projects/{proj_id}/recommendations/generate?background=true",
+        headers=headers,
+    )
+    assert retry_res.status_code == 201
+    assert retry_res.json()["status"] == "pending"
+
+
+@pytest.mark.asyncio
+async def test_recommendation_background_generation_task_scheduling_failure(
+    client: AsyncClient, test_app, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When task_manager.spawn raises an exception, recommendation generation returns 500 and transitions record to failed."""
+    token, _, proj_id = await _create_user_and_project(
+        client, "Rec Spawn Failure", "rec_spawn_failure@example.com"
+    )
+    headers = {"Authorization": f"Bearer {token}"}
+
+    from app.core.tasks import task_manager
+
+    def failing_spawn(coro, _name=None):
+        coro.close()
+        raise RuntimeError("Simulated task spawn failure (e.g. event loop shutting down)")
+
+    monkeypatch.setattr(task_manager, "spawn", failing_spawn)
+
+    res = await client.post(
+        f"/api/v1/gift-projects/{proj_id}/recommendations/generate?background=true",
+        headers=headers,
+    )
+    assert res.status_code == 500
+    assert "failed to schedule" in res.json()["detail"].lower()
+
+    # Verify record was marked failed in DB
+    session_factory = test_app.state.session_factory
+    async with session_factory() as session:
+        gen_res = await session.execute(
+            select(GiftRecommendationGeneration).where(
+                GiftRecommendationGeneration.gift_project_id == uuid.UUID(proj_id)
+            )
+        )
+        gen = gen_res.scalar_one_or_none()
+        assert gen is not None
+        assert gen.status == RecommendationGenerationStatus.failed
+        assert "worker dispatch failed" in (gen.error_message or "").lower()
+
+
+@pytest.mark.asyncio
+async def test_recommendation_worker_does_not_overwrite_already_failed_generation(
+    client: AsyncClient, test_app
+) -> None:
+    """A worker completing inference must not overwrite a recommendation generation that was already marked failed."""
+    from app.api.v1.recommendations import _execute_generation_worker
+    from app.services.ai.prompts import RecommendationPromptInput
+
+    token, _, proj_id = await _create_user_and_project(
+        client, "Rec No Overwrite", "rec_no_overwrite@example.com"
+    )
+    session_factory = test_app.state.session_factory
+
+    async with session_factory() as session:
+        proj = await session.get(GiftProject, uuid.UUID(proj_id))
+        assert proj is not None
+
+        # Insert a generation already in failed status
+        failed_gen = GiftRecommendationGeneration(
+            gift_project_id=uuid.UUID(proj_id),
+            user_id=proj.user_id,
+            provider="mock",
+            model="mock-gemma",
+            prompt_version="v1",
+            status=RecommendationGenerationStatus.failed,
+            error_message="Original timeout failure reason.",
+        )
+        session.add(failed_gen)
+        await session.commit()
+        gen_id = failed_gen.id
+        user_id = proj.user_id
+
+    prompt_input = RecommendationPromptInput(
+        recipient_name="Jordan",
+        relationship="Partner",
+        interests=["Astronomy"],
+        notes="None",
+        occasion="Birthday",
+        occasion_date=None,
+        budget_min=Decimal("40.00"),
+        budget_max=Decimal("150.00"),
+        currency="USD",
+    )
+
+    # Run the worker - it generates ideas, but sees status is no longer pending and aborts write
+    await _execute_generation_worker(
+        generation_id=gen_id,
+        project_id=uuid.UUID(proj_id),
+        user_id=user_id,
+        prompt_input=prompt_input,
+        budget_min=Decimal("40.00"),
+        budget_max=Decimal("150.00"),
+        currency="USD",
+        settings=test_app.state.settings,
+        session_factory=session_factory,
+    )
+
+    async with session_factory() as session:
+        refreshed = await session.get(GiftRecommendationGeneration, gen_id)
+        assert refreshed is not None
+        assert refreshed.status == RecommendationGenerationStatus.failed
+        assert refreshed.error_message == "Original timeout failure reason."
+
+        # Verify no recommendations were inserted
+        recs_res = await session.execute(
+            select(GiftRecommendation).where(GiftRecommendation.generation_id == gen_id)
+        )
+        recs = recs_res.scalars().all()
+        assert len(recs) == 0

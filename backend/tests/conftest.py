@@ -8,6 +8,7 @@ from sqlalchemy import text
 
 from app.core.config import Settings
 from app.core.rate_limit import auth_rate_limiter
+from app.core.tasks import task_manager
 from app.main import create_app
 from app.models import Base
 
@@ -35,6 +36,7 @@ def test_settings() -> Settings:
 async def test_app(test_settings: Settings) -> AsyncGenerator[FastAPI, None]:
     """FastAPI application fixture with database tables initialized and cleaned for each test."""
     auth_rate_limiter.reset()
+    task_manager.reset()
     app_instance = create_app(settings=test_settings)
     async with app_instance.router.lifespan_context(app_instance):
         engine = app_instance.state.engine

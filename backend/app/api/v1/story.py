@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import time
 import uuid
@@ -70,7 +71,9 @@ async def _execute_story_worker(
             story = await session.get(StoryKeepsake, story_id)
             if not story or story.status != StoryKeepsakeStatus.pending:
                 logger.warning(
-                    "Story %s is no longer pending; aborting background write.", story_id
+                    "Story %s is no longer pending (current: %s); aborting background write.",
+                    story_id,
+                    getattr(story, "status", None),
                 )
                 return
 
@@ -89,6 +92,30 @@ async def _execute_story_worker(
                 project_id,
                 elapsed,
             )
+
+    except asyncio.CancelledError:
+        logger.warning(
+            "Background story generation task was cancelled (story_id=%s, project_id=%s)",
+            story_id,
+            project_id,
+        )
+        try:
+            async with session_factory() as session:
+                story = await session.get(StoryKeepsake, story_id)
+                if story and story.status == StoryKeepsakeStatus.pending:
+                    story.status = StoryKeepsakeStatus.failed
+                    story.error_message = (
+                        "Story generation was interrupted or cancelled. Please retry."
+                    )
+                    story.updated_at = datetime.now(UTC)
+                    await session.commit()
+        except Exception as cancel_db_err:
+            logger.warning(
+                "Failed to update cancelled story %s status to failed: %s",
+                story_id,
+                cancel_db_err,
+            )
+        raise
 
     except Exception as exc:
         elapsed = time.monotonic() - start_time
@@ -133,6 +160,12 @@ async def _execute_story_worker(
                     story.error_message = error_message
                     story.updated_at = datetime.now(UTC)
                     await session.commit()
+                else:
+                    logger.warning(
+                        "Story %s is no longer pending (current: %s); skipping error transition.",
+                        story_id,
+                        getattr(story, "status", None),
+                    )
         except Exception as db_err:
             logger.critical("Failed to update story %s status to failed: %s", story_id, db_err)
 
@@ -271,18 +304,56 @@ async def generate_story(
     # 7. If background execution is enabled (production default):
     if background:
         session_factory = getattr(request.app.state, "session_factory", None)
-        if session_factory is not None:
+        if session_factory is None:
+            logger.error(
+                "Background story worker dispatch failed: session_factory is not configured on app state (project_id=%s, story_id=%s)",
+                project.id,
+                story_record.id,
+            )
+            story_record.status = StoryKeepsakeStatus.failed
+            story_record.error_message = (
+                "Background worker dispatch failed due to server configuration. Please try again."
+            )
+            story_record.updated_at = datetime.now(UTC)
+            await db.commit()
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to schedule background story generation. Please try again.",
+            )
+
+        worker_coro = _execute_story_worker(
+            story_id=story_record.id,
+            project_id=project.id,
+            user_id=current_user.id,
+            prompt_input=prompt_input,
+            settings=settings,
+            session_factory=session_factory,
+        )
+        try:
             task_manager.spawn(
-                _execute_story_worker(
-                    story_id=story_record.id,
-                    project_id=project.id,
-                    user_id=current_user.id,
-                    prompt_input=prompt_input,
-                    settings=settings,
-                    session_factory=session_factory,
-                ),
+                worker_coro,
                 name=f"story-gen-{story_record.id}",
             )
+        except Exception as spawn_exc:
+            try:
+                worker_coro.close()
+            except Exception:
+                pass
+            logger.error(
+                "Failed to spawn background story generation task (project_id=%s, story_id=%s): %s",
+                project.id,
+                story_record.id,
+                type(spawn_exc).__name__,
+            )
+            story_record.status = StoryKeepsakeStatus.failed
+            story_record.error_message = "Background worker dispatch failed. Please try again."
+            story_record.updated_at = datetime.now(UTC)
+            await db.commit()
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to schedule background story generation. Please try again.",
+            ) from None
+
         return StoryKeepsakeRead.model_validate(story_record)
 
     # 8. Synchronous fallback execution (for testing and direct CLI integrations)

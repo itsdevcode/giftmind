@@ -251,7 +251,9 @@ export default function HomePage() {
       setGenerationError(null);
 
       let attempts = 0;
-      const maxAttempts = 60; // 60 attempts * 2.5s = 150s
+      // Budget aligns with settings.full_inference_retry_budget_seconds (~420s)
+      // 180 attempts * 2.5s = 450s, preventing premature frontend abandonment
+      const maxAttempts = 180;
 
       const pollTick = async () => {
         if (activeProjectIdRef.current !== projectId) {
